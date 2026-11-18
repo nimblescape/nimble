@@ -17,7 +17,7 @@ import (
 func NewCmdTool() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tool <command>",
-		Short: "The tool catalog; select a machine's tools, pin the languages' versions",
+		Short: "The tool catalog; select a machine's tools and shell, pin the languages' versions",
 		Long: heredoc.Doc(`
 			The catalog lists what a template can install (Homebrew on macOS, apt or official
 			releases on Debian). tool select picks a machine's tools from it: checked ones are
@@ -25,6 +25,7 @@ func NewCmdTool() *cobra.Command {
 			update; unchecked ones of the host file are uninstalled (after a warning and a yes).
 			Without --host it acts on this machine; with --host (from the workstation) it
 			records the change, then sends the config to that host and applies it there.
+			tool shell picks the login shell (zsh, bash or the template's) the same way.
 
 			The languages (node, go, rust, python) run at the version in toolchain/pins.yaml,
 			the same on every machine: tool list shows them with their updates, tool use picks
@@ -35,7 +36,7 @@ func NewCmdTool() *cobra.Command {
 	sel := newSelect()
 	sel.Flags().StringVar(&onHost, "host", "", "a host instead of this machine (from the workstation)")
 	sel.RegisterFlagCompletionFunc("host", hosts.CompleteHostNames)
-	cmd.AddCommand(newList(), sel, newUse(), newUpdate(), newUninstall())
+	cmd.AddCommand(newList(), sel, newShell(), newUse(), newUpdate(), newUninstall())
 	return cmd
 }
 

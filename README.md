@@ -29,6 +29,7 @@ nimble push                           # publish the changes
 nimble update                         # pull the config, apply it here, bring tools up to date
 nimble update all                     # the same on every managed host
 nimble tool select --host devbox      # pick a host's tools: check to install, uncheck to uninstall
+nimble tool shell bash                # this machine's login shell: zsh, bash or the template's
 nimble tool use go                    # pick a Go version from its releases and pin it
 nimble tool list                      # the catalog, and updates of the pinned languages
 nimble service add claude owner/app --host devbox   # a Claude Code server for a repo
@@ -37,7 +38,7 @@ nimble update all --yubikey           # reach the hosts with a YubiKey backup (n
 nimble push                           # check, commit and publish config changes
 ```
 
-Commands that change the config check it and commit it (`tool use` and `tool update` only edit `pins.yaml`; `push` commits that); `nimble push` publishes, and machines pick changes up with `nimble update`. On a host, `tool select`, `service` and `host set|edit` change its own host file; the workstation's next `nimble update <host>` merges that into the config repo (a clash opens in the editor) and commits it. Any missing argument is asked for on a terminal: a list to pick from, an editable default, answers checked before they are taken. Hand edits to the YAML files are fine too: nimble validates them.
+Commands that change the config check it and commit it (`tool use` and `tool update` only edit `pins.yaml`; `push` commits that); `nimble push` publishes, and machines pick changes up with `nimble update`. On a host, `tool select`, `tool shell`, `service` and `host set|edit` change its own host file; the workstation's next `nimble update <host>` merges that into the config repo (a clash opens in the editor) and commits it. Any missing argument is asked for on a terminal: a list to pick from, an editable default, answers checked before they are taken. Hand edits to the YAML files are fine too: nimble validates them.
 
 ## Commands
 
@@ -51,6 +52,7 @@ Commands that change the config check it and commit it (`tool use` and `tool upd
 | `host create\|set\|edit\|list\|show\|remove` | The machines, one YAML file each; `show` prints one merged with its template and the defaults |
 | `template create\|set\|edit\|list\|show\|default\|remove` | Which tools and login shell a machine gets |
 | `tool list`, `tool select [--host h]` | The tool catalog and updates of the pinned versions; pick a machine's tools (check to install, uncheck to uninstall), here or on a host from the workstation |
+| `tool shell [zsh\|bash\|default] [--host h]` | Pick a machine's login shell (`default`: the template's) and apply it, here or on a host from the workstation |
 | `tool use [language] [version]` | Pin Node, Go, Rust or Python to a version picked from its releases |
 | `tool update [name…]` | Write bugfix updates of the pinned languages (feature updates on request) |
 | `service list\|add\|enable\|disable\|remove [--host h]` | A Claude Code server per repo on a host |

@@ -27,7 +27,7 @@ import (
 
 // edits lists the commands that change the config repo beyond one host file. A host holds
 // only a snapshot of it, so they are refused there before they write anything. (host set,
-// host edit, tool select and service may change the host's own file there: they check
+// host edit, tool select, tool shell and service may change the host's own file there: they check
 // nimble.EditableHost themselves.)
 var edits = map[string]bool{
 	"host create": true, "host remove": true,
