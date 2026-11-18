@@ -127,13 +127,21 @@ func nodePackages(p *config.Pins, latest bool) error {
 		}
 		tsMoved = tsMoved || pkg == "@nimblescape/typescript"
 	}
-	if !tsMoved && !latest && nimble.Exists(filepath.Join(bin, "tsc")) {
-		return nil // installed, and ts didn't move
+	if tsInstalledFor[bin] || (!tsMoved && !latest && nimble.Exists(filepath.Join(bin, "tsc"))) {
+		return nil // done in this run already (install, then update), or installed and ts didn't move
 	}
 	// no terminal for ts (stdin and stdout aren't one): it takes VS Code's TypeScript, it doesn't ask
-	return nimble.Wait("TypeScript for ts (ts install --global)", nimble.Cmd{Name: filepath.Join(bin, "ts"), Env: npmEnv(p),
+	err := nimble.Wait("TypeScript for ts (ts install --global)", nimble.Cmd{Name: filepath.Join(bin, "ts"), Env: npmEnv(p),
 		Args: []string{"install", "--global"}, Quiet: true, Stdin: strings.NewReader("")}.Do)
+	if err == nil {
+		tsInstalledFor[bin] = true
+	}
+	return err
 }
+
+// tsInstalledFor remembers, per Node, that ts install --global ran in this run: apply installs
+// what's missing, then updates — once is enough.
+var tsInstalledFor = map[string]bool{}
 
 func npmEnv(p *config.Pins) []string { return []string{"PATH=" + nodeBin(p) + ":" + os.Getenv("PATH")} }
 
