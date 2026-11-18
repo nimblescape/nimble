@@ -148,16 +148,12 @@ func nodeStatus(r *nimble.Report, p *config.Pins) {
 		have = strings.TrimPrefix(nimble.ReadTrim(filepath.Join(nvm, "alias", "default")), "v")
 	}
 	r.Same("node (default)", p.Node, have)
-	for _, spec := range p.NPMGlobal {
-		name, want := nimble.SplitSpec(spec)
-		got := nimble.JSONField(filepath.Join(nodeDir, "lib", "node_modules", name, "package.json"), "version")
-		switch {
-		case want != "":
-			r.Same("npm "+name, want, got)
-		case got != "":
-			r.OK("npm "+name, got+" (follows latest)")
-		default:
-			r.Bad("npm "+name, "missing")
+	// node brings ts (@nimblescape/typescript) and the TypeScript ts installs globally
+	for _, pkg := range []struct{ label, name string }{{"ts", "@nimblescape/typescript"}, {"typescript (global)", "typescript"}} {
+		if got := nimble.JSONField(filepath.Join(nodeDir, "lib", "node_modules", pkg.name, "package.json"), "version"); got != "" {
+			r.OK(pkg.label, got+" (kept current)")
+		} else {
+			r.Bad(pkg.label, "missing")
 		}
 	}
 }

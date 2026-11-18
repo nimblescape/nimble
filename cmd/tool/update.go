@@ -22,7 +22,7 @@ func newUpdate() *cobra.Command {
 		Long: heredoc.Doc(`
 			Write the updates nimble tool list shows into pins.yaml. Bugfix updates follow each
 			language's own scheme for fixes that keep compatibility: the patch release (x.y.Z)
-			for Go, Python, Node and npm packages; the 1.x releases for Rust, which ships its
+			for Go, Python and Node; the 1.x releases for Rust, which ships its
 			fixes there under its stability promise. Anything newer is a feature update.
 
 			On a terminal it shows a checklist: bugfix updates checked, feature updates not;
@@ -45,7 +45,7 @@ func newUpdate() *cobra.Command {
 }
 
 type pin struct {
-	key, name, label, current, latest, feature, err string
+	key, label, current, latest, feature, err string
 }
 
 func check(write, markdown bool, names []string, feature bool) error {
@@ -92,10 +92,7 @@ func check(write, markdown bool, names []string, feature bool) error {
 	var pins []pin
 	for _, e := range entries {
 		l := lookups[e.Installer+":"+e.Label]
-		x := pin{key: e.Key, name: e.Name, label: e.Label, current: e.Current}
-		if e.Key == "npmGlobal" {
-			x.label = "npm " + e.Name
-		}
+		x := pin{key: e.Key, label: e.Label, current: e.Current}
 		if l.err != nil {
 			x.err = l.err.Error()
 		} else {
@@ -124,7 +121,7 @@ func check(write, markdown bool, names []string, feature bool) error {
 			return err
 		}
 		for i, v := range pick {
-			if err := config.ReplaceVersion(pins[i].key, pins[i].name, pins[i].current, v); err != nil {
+			if err := config.ReplaceVersion(pins[i].key, pins[i].current, v); err != nil {
 				return err
 			}
 			written[i] = v
@@ -218,7 +215,7 @@ func choose(pins []pin, names []string, feature, markdown bool) (map[int]string,
 		for _, n := range names {
 			found := false
 			for i, x := range pins {
-				if n != x.key && n != x.name && n != x.label {
+				if n != x.key && n != x.label {
 					continue
 				}
 				found = true

@@ -51,7 +51,7 @@ func npmHas(bin string) func() bool {
 var Catalog = []Tool{
 	{Name: "starship", Desc: "the starship prompt, the same in bash and zsh (shell/starship.toml)", Short: "shell prompt",
 		Install: starshipInstall, Installed: has("starship"), Update: starshipUpdate},
-	{Name: "node", Desc: "Node at the pinned version (through nvm, installed with it when missing) and the npm packages in pins.yaml", Short: "Node + npm packages",
+	{Name: "node", Desc: "Node at the pinned version (through nvm, installed with it when missing), the newest npm and ts (@nimblescape/typescript), and the TypeScript ts installs", Short: "Node + npm, ts (TypeScript)",
 		Install: node, Installed: nodeInstalled, Update: nodeUpdate},
 	{Name: "go", Desc: "Go (go.dev release in ~/sdk, the default go) and the go tools in pins.yaml", Short: "Go + go tools", Install: goInstall, Installed: func() bool { return GoVersion() != "" }},
 	{Name: "python", Desc: "uv, the pinned Python, the uv tools in pins.yaml", Short: "Python (uv) + uv tools", Install: python, Installed: has("uv"), Update: uvUpdate},

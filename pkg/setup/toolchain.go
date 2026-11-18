@@ -86,56 +86,56 @@ func node(p *config.Pins) error {
 			return err
 		}
 	}
-	return npmGlobals(p, false)
+	return nodePackages(p, false)
 }
 
-// nodeUpdate is node's part of nimble update: nvm and the npm packages that aren't pinned
-// move to their newest release. Node itself and pinned packages only move with their pin.
+// nodeUpdate is node's part of nimble update: nvm, npm and @nimblescape/typescript move to
+// their newest release, and TypeScript to the one ts goes with. Node only moves with its pin.
 func nodeUpdate(p *config.Pins) error {
 	if err := nvmUpdate(os.Getenv("NVM_DIR")); err != nil {
 		return err
 	}
-	return npmGlobals(p, true)
+	return nodePackages(p, true)
 }
 
-func npmEnv(p *config.Pins) []string { return []string{"PATH=" + nodeBin(p) + ":" + os.Getenv("PATH")} }
-
-// npmGlobals installs the global npm packages of pins.yaml into the pinned Node: a pinned
-// one at exactly its version, an unpinned one if it is missing — or, with latest, at its
-// newest release.
-func npmGlobals(p *config.Pins, latest bool) error {
+// nodePackages come with node, in the pinned Node: npm and @nimblescape/typescript (the ts
+// command) at their newest release, and the TypeScript ts goes with, installed globally by
+// ts itself (ts install --global without a terminal: the TypeScript of VS Code). latest
+// (nimble update) moves them on; otherwise only what's missing is installed.
+func nodePackages(p *config.Pins, latest bool) error {
 	bin := nodeBin(p)
-	root := filepath.Join(filepath.Dir(bin), "lib", "node_modules")
-	for _, spec := range p.NPMGlobal {
-		name, want := nimble.SplitSpec(spec)
-		if name == "" {
+	tsMoved := false
+	for _, pkg := range []string{"npm", "@nimblescape/typescript"} {
+		have := nimble.JSONField(filepath.Join(filepath.Dir(bin), "lib", "node_modules", pkg, "package.json"), "version")
+		if have != "" && !latest {
 			continue
 		}
-		have := nimble.JSONField(filepath.Join(root, name, "package.json"), "version")
-		switch {
-		case want != "" && have == want:
+		cmd := exec.Command(filepath.Join(bin, "npm"), "view", pkg, "version")
+		cmd.Env = append(os.Environ(), npmEnv(p)...)
+		out, _ := cmd.Output()
+		newest := strings.TrimSpace(string(out))
+		if have != "" && (newest == "" || newest == have) {
 			continue
-		case want == "" && have != "" && !latest:
-			continue
-		case want == "" && have != "":
-			cmd := exec.Command(filepath.Join(bin, "npm"), "view", name, "version")
-			cmd.Env = append(os.Environ(), npmEnv(p)...)
-			out, _ := cmd.Output()
-			if want = strings.TrimSpace(string(out)); want == "" || want == have {
-				continue
-			}
 		}
-		target := name + "@latest"
-		if want != "" {
-			target = name + "@" + want
+		target := pkg + "@latest"
+		if newest != "" {
+			target = pkg + "@" + newest
 		}
 		if err := nimble.Wait(fmt.Sprintf("npm install -g %s (was: %s)", target, orNone(have)), nimble.Cmd{Name: filepath.Join(bin, "npm"), Env: npmEnv(p),
 			Args: []string{"install", "-g", "--no-fund", "--no-audit", "--loglevel=error", target}}.Do); err != nil {
 			return err
 		}
+		tsMoved = tsMoved || pkg == "@nimblescape/typescript"
 	}
-	return nil
+	if !tsMoved && !latest && nimble.Exists(filepath.Join(bin, "tsc")) {
+		return nil // installed, and ts didn't move
+	}
+	// no terminal for ts (stdin and stdout aren't one): it takes VS Code's TypeScript, it doesn't ask
+	return nimble.Wait("TypeScript for ts (ts install --global)", nimble.Cmd{Name: filepath.Join(bin, "ts"), Env: npmEnv(p),
+		Args: []string{"install", "--global"}, Quiet: true, Stdin: strings.NewReader("")}.Do)
 }
+
+func npmEnv(p *config.Pins) []string { return []string{"PATH=" + nodeBin(p) + ":" + os.Getenv("PATH")} }
 
 // --- go -------------------------------------------------------------------------------
 
