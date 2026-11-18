@@ -28,12 +28,12 @@ nimble is one Go binary with two jobs. On a **workstation** (macOS or Debian) it
  host: ~/.nimble = snapshot  +  ~/.local/bin/nimble   →  apply, harden, service sync
 ```
 
-- **Workstation**: the machine with the config checkout. It is a Mac, or a Debian machine whose host file says `mode: workstation`. It generates the ssh config for the hosts and is the only place config changes are made. A Debian workstation is hardened like a host, once it has a host file and a key to trust.
+- **Workstation**: the machine with the config checkout. It is a Mac, or a Debian machine whose host file says `mode: workstation`. It generates the ssh config for the hosts and is where config changes are committed (a host changes only its own host file, which the workstation reads back; see "Changes made on a host"). A Debian workstation is hardened like a host, once it has a host file and a key to trust.
 - **Managed host**: a Debian machine in `hosts/` with mode `managed` (the default). nimble sets it up, hardens it and keeps it updated. It never sees the config repo, only a snapshot of what it needs.
 - **ssh entry**: a host with `mode: ssh`. It only gets an entry in the workstation's ssh config.
 - Commands that change an inventory write the file and commit it locally (`git add --all` of the directories they changed, then `git commit`). `tool use`, `tool update` and `edit` only write files; `nimble push` commits those. `nimble push` commits the hand edits, always pulls, then shows what goes out — the commits and `git diff --stat` against the upstream; with `--diff` also the full diff, in git's pager — and on a terminal asks; declined (or Esc, or nothing pulled), the hand edits' commit is undone and they are uncommitted again. Their commit message is asked for after the yes (or given with `-m`). A push rejected because another machine pushed meanwhile pulls and pushes again. Machines pick changes up with `nimble update`. `nimble changes` shows what the next push publishes without committing or pushing anything (`--diff` adds the full diff, in git's pager), for the config repo and a personal layer with its own git repo.
 - **Conflicts.** Every machine pushes to the config repo's `main`; `push` (with the hand edits committed first, so nothing goes through git's stash) and a local `update` (hand edits stay uncommitted: `--autostash`) pull with `git pull --rebase`. Changes to different files, or different lines of one file, merge by themselves. When the same lines were changed here and on another machine, the rebase is aborted — the repo is exactly as before, never half-rebased — and nimble names the files and the commits on both sides. On a terminal it offers to resolve them: the files open in your editor (see "The editor"), and once they have no conflict markers left and the YAML is valid, the rebase goes on with your commits on top; stopped, everything goes back to how it was. Without a terminal it stops with an error. In a local `update`, uncommitted edits that clash with what was pulled (the pull itself goes through): resolved in the editor the same way, they stay uncommitted; otherwise the files are exactly what was pulled and the edits wait in git's stash (`git -C ~/.nimble stash pop`).
-- **Unpublished changes.** After every command on a machine with the config checkout, nimble warns on stderr while something isn't published yet ("1 commit not published yet — the other machines don't have it: nimble push"). It leaves out shell completion, help (`help`, `--help`) and `changes` (which ends with that warning itself); hosts, with a snapshot instead of a checkout, never warn.
+- **Unpublished changes.** After every command on a machine with the config checkout, nimble warns on stderr while something isn't published yet ("1 commit not published yet — the other machines don't have it: nimble push"). It leaves out shell completion, help (`help`, `--help`) and `changes` (which ends with that warning itself). On a host the warning is about its host file, while it has changes the workstation hasn't read back yet.
 - **Prompts.** Lists filter as you type; Esc or Ctrl+C leaves any prompt and ends nimble gracefully (exit status 0), without changing anything further.
 - **Output.** `---` starts a step, `==>` reports a change. A step that only waits (a build or download, an install, sending nimble or the snapshot to a host, release lookups) shows a spinner on a terminal: `⠹ send nimble` while it runs, then `✓ send nimble  2.1s` (or `✗` when it fails). Anything that prints meanwhile — nimble's own lines and prompts, a command's output, ssh asking for a key touch, sudo about to ask for a password — stops the spinner first and leaves a plain `--- send nimble` line, so a prompt is never drawn over. Without a terminal (pipes, CI) a waiting step is a plain `---` line; `tool update --markdown` prints none.
 
@@ -260,7 +260,7 @@ The tool catalog is built into nimble; `nimble tool list` shows it with ✓ (wan
 - **Install** runs on every apply and installs what is missing. Tools install in catalog order; `firebase` pulls in `node`. One tool failing is reported and the others still install; the updates and the later steps still run, and apply ends with an error. On a host, hardening and the services run regardless.
 - **Update** runs with `apply --upgrade`, i.e. on `nimble update`. Tools that aren't installed are skipped; a failure is a warning.
 - **Vendor apt repositories** get their key in `/etc/apt/keyrings/<name>.gpg` and a list in `/etc/apt/sources.list.d/<name>.list`. For repositories with a Debian codename, nimble uses this release's codename, or the newest older Debian release (trixie, bookworm) the vendor serves. If `apt-get update` fails after adding a list, the list is removed again.
-- **`tool select [--host h]`** picks a machine's tools on a terminal: the catalog for its system (`iterm2`, macOS only, is offered only for a Mac; `--host` means a Debian host), with what the machine already has checked and marked `(template <name>)` or `(host file)`. Newly checked tools are installed and added to the host file's `tools`. Unchecked tools of the host file are taken out of it and uninstalled where nimble installed them — through Homebrew, apt or npm, or as its own release binaries (`gh`, `azure`, `gcloud`, `docker`, `firebase`, `iterm2`, `lima`, `task`); the language toolchains, starship and Claude Code stay installed and nimble only stops managing them. Before anything is removed nimble warns, tool by tool, what gets uninstalled and what it only stops managing, and asks (default no). A tool from the template stays: change the template instead. Everything is one host-file change and one commit; with `--host` it is recorded on the workstation, the host is updated right away (the full `nimble update <host>`) and the removed tools are uninstalled there. Without a terminal, `nimble host set <host> tools=a,b,c` changes the list.
+- **`tool select [--host h]`** picks a machine's tools on a terminal: the catalog for its system (`iterm2`, macOS only, is offered only for a Mac; `--host` means a Debian host), with what the machine already has checked and marked `(template <name>)` or `(host file)`. Newly checked tools are installed and added to the host file's `tools`. Unchecked tools of the host file are taken out of it and uninstalled where nimble installed them — through Homebrew, apt or npm, or as its own release binaries (`gh`, `azure`, `gcloud`, `docker`, `firebase`, `iterm2`, `lima`, `task`); the language toolchains, starship and Claude Code stay installed and nimble only stops managing them. Before anything is removed nimble warns, tool by tool, what gets uninstalled and what it only stops managing, and asks (default no). A tool from the template stays: change the template instead. Everything is one host-file change and one commit; with `--host` the host's own changes are read back first, the change is recorded on the workstation, the host is updated right away (the full `nimble update <host>`) and the removed tools are uninstalled there. On a host itself, it changes the host's own file (see "Changes made on a host"). Without a terminal, `nimble host set <host> tools=a,b,c` changes the list.
 
 ## Pinned languages
 
@@ -338,7 +338,7 @@ The host must be in `hosts/` and managed. The steps:
    2. Detect the CPU (`uname -m`) and get a Linux build of nimble for it.
    3. Upload nimble and the domain's trusted public keys to `/tmp`, and run `nimble bootstrap` there as root (directly, or with sudo). It installs sudo, creates the admin user if missing, asks for a password if it has none (it stays the sudo fallback), adds the user to group `sudo`, writes the keys into the user's `authorized_keys` and puts nimble in `~/.local/bin`. The uploads are deleted.
 3. **Confirm key login** as the admin user in a fresh connection. If it fails, nimble stops here with nothing locked down.
-4. **Send nimble** to `~/.local/bin/nimble` and **send the snapshot** of the host's config.
+4. **Send nimble** to `~/.local/bin/nimble` and **send the snapshot** of the host's config (for a host set up before, after reading back what was changed there).
 5. **Harden, then apply**, in one connection with the agent forwarded: `sudo nimble harden --user <admin> --as <host> && nimble apply --as <host>`. sudo asks for the admin's password this one time; from then on, the hardware key confirms it. apply runs only if harden's audit passes.
 6. **Check sudo** with the hardware key: `sudo -k; sudo -v`.
 
@@ -348,7 +348,7 @@ The host must be in `hosts/` and managed. The steps:
 
 `all` means every host with mode `managed`; a host named on the command line must be managed too (ssh entries and workstations are refused before anything is sent). The workstation must have the checkout on branch `main`. For each host:
 
-1. Send the snapshot.
+1. Read back what was changed on the host since its last snapshot and merge it into the config repo (see "Changes made on a host"), then send the new snapshot. When that merge can't be completed, the host gets nothing and keeps its change.
 2. Send nimble.
 3. Run, with the agent forwarded: `sudo nimble harden --as <host>`, `nimble apply --upgrade --as <host>`, `sudo nimble service sync --as <host>`. Each runs whatever the one before did, so a tool that fails to install doesn't keep the keys from being synced; the update fails if any of them failed.
 
@@ -362,11 +362,25 @@ A host gets only what it needs, never the repo:
 - the public keys its domain trusts
 - the sources of the links that apply to Debian
 - a reduced `nimble.yaml` (its template as the default, only its own domain, the shared links) and, if there are personal links for Debian, `personal/nimble.yaml`
-- `.snapshot`: `host`, `from` (the workstation), `commit` (the short commit, plus "+ uncommitted changes" when the checkout had any) and `date`
+- `.sent/hosts/<host>.yaml`: the host file once more, as sent — the base for merging the host's own changes back
+- `.snapshot`: `host`, `commit` (the short commit, plus "+ uncommitted changes" when the checkout had any) and `date` — nothing about the workstation
 
 The snapshot is built from the files on disk, so uncommitted edits in the checkout are included. It is sent as a tar stream over SSH. On the host it is unpacked next to `~/.nimble` first; only a complete snapshot then replaces the old one (everything except `cache/`, `backup/` and `local.sh`), so a transfer that breaks off changes nothing.
 
-On a host, nimble knows from `.snapshot` that it has no repo. Every command that changes the config refuses there before it writes anything and points to the workstation (`--host <name>` there, then `nimble update <name>`); only `nimble edit local` stays, for the host's own `local.sh`. A local `nimble update` on the host re-applies the snapshot it has.
+On a host, nimble knows from `.snapshot` that it has no repo. Commands that change anything beyond its own host file — other hosts, templates, domains, keys, the pins (`tool use`, `tool update`) — refuse there before they write anything and point to the workstation (`--host <name>` there, then `nimble update <name>`); `nimble edit local` stays, for the host's own `local.sh`. A local `nimble update` on the host re-applies the snapshot it has.
+
+### Changes made on a host
+
+On a host, `tool select`, `service add|enable|disable|remove` and `host set|edit <host>` change its own host file, and they work there as on the workstation: tools are installed or uninstalled right away, a service is installed (asking for its logins) and started. Instead of a commit, each change adds its message to `~/.nimble/.changed`. Editing the host file by hand counts too. `nimble changes` on the host lists them (`--diff`: the diff against the file as sent), `nimble status` marks the host file as changed, and every command warns until the workstation has read them back. The host never gets git or GitHub credentials.
+
+The workstation reads them back over the existing SSH connection before the host gets its next snapshot — on every `nimble update <host>` and `nimble init <host>`, and before `tool select --host` and `service … --host` change that host:
+
+1. Fetch the host file as sent (`.sent/hosts/<host>.yaml`), as it is now, and `.changed`. Without a sent copy (a host not set up yet) or with nothing changed, nothing happens.
+2. Merge three ways, with the file as sent as the base: changes made only on the host are taken over, changes to different lines on both sides merge by themselves (`git merge-file`).
+3. When the same lines were changed here and on the host, or the merged file isn't valid, the file opens in the editor with conflict markers (`here`, `changed on <host>`), as for a pull; stopped, or without a terminal, the file here stays as it was and the host gets no new snapshot, so its change waits for the next try.
+4. Commit only that host file: `hosts: swan service add claude owner/app (on swan)` for one change, `hosts: swan changed on swan (n changes)` with the list for several, `hosts: swan changed on swan` for a hand edit. `nimble push` publishes it.
+
+The new snapshot then carries the merged file, and starts `.sent` and `.changed` afresh.
 
 ## Hardening
 
@@ -428,7 +442,7 @@ The `sudo` level checks only the admin's sudo rights (no NOPASSWD), PAM and the 
 
 ## Services: the Claude Code server
 
-`nimble service add claude [owner/name] [--host h]` runs a [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control) server for a repo on a Debian host. Inside a checkout, its GitHub repo is the default; the repo must exist on GitHub. The host needs `gh` (`nimble tool select --host h`, check `gh`). The service is recorded in the host file, the host is updated, and then, on the host as root:
+`nimble service add claude [owner/name] [--host h]` runs a [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control) server for a repo on a Debian host — from the workstation with `--host`, or on the host itself (the workstation reads the change back, see "Changes made on a host"). Inside a checkout, its GitHub repo is the default; the repo must exist on GitHub. The host needs `gh` (`nimble tool select`, check `gh`). The service is recorded in the host file, from the workstation the host is updated, and then, on the host as root:
 
 1. **Service user** `claude` with a locked password and home `/home/claude` (0750). sshd gets `DenyUsers claude` (`/etc/ssh/sshd_config.d/90-nimble-deny-claude.conf`), so it never logs in over SSH.
 2. **Claude Code** for that user, with Claude Code's installer.
@@ -444,7 +458,7 @@ A service change is committed to the host file only once it worked on the host; 
 
 Both take host names or `all`; they then run on the hosts over SSH.
 
-**`nimble status`**: this machine (system, host file, template, config: branch, commit, uncommitted changes and sync with GitHub as of the last fetch, or the snapshot), the login shell against the template, each tool against what is wanted (for the languages: the installed default against the pin), on Debian the pam_rssh version, and the lines other tools added to the dotfiles. It exits with 1 when something differs.
+**`nimble status`**: this machine (system, host file, template, config: branch, commit, uncommitted changes and sync with GitHub as of the last fetch, or the snapshot and whether the host file was changed there), the login shell against the template, each tool against what is wanted (for the languages: the installed default against the pin), on Debian the pam_rssh version, on a host each service of its host file (installed, enabled and running as the host file says — otherwise what to run), and the lines other tools added to the dotfiles. It exits with 1 when something differs.
 
 **`nimble doctor`**: the YAML is valid; the dotfiles are managed by nimble (zsh's only where zsh is); the zsh launcher works; every link is in place; the git identity. On a Mac: the daily key per label (present, valid, not expiring within 30 days, handle in `~/.ssh`), the YubiKey backups, Touch ID for sudo (and iTerm2's setting that hides the Touch ID prompt), the ssh config include, a trusted key in the SSH agent. On Debian: the hardening files, the sudo group (the admin and `sudoAllowed` accounts), root lock, the forwarded agent, and the audit.
 

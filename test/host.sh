@@ -31,7 +31,8 @@ cp "$work/key.pub" "$snap/keys/yubikey/test.pub"
 printf 'address: devbox.example.com\nuser: debian\ntemplate: plain\nservices:\n  - service: claude\n    repo: owner/app\n    state: enabled\n' >"$snap/hosts/devbox.yaml"
 printf 'description: no tools\ntools: []\n' >"$snap/templates/plain.yaml"
 printf 'defaultTemplate: plain\ndomains:\n  main:\n    label: ssh\nlinks: []\n' >"$snap/nimble.yaml"
-printf 'host: devbox\nfrom: host-test\ncommit: test\ndate: 2026-01-01T00:00:00Z\n' >"$snap/.snapshot"
+printf 'host: devbox\ncommit: test\ndate: 2026-01-01T00:00:00Z\n' >"$snap/.snapshot"
+mkdir -p "$snap/.sent/hosts" && cp "$snap/hosts/devbox.yaml" "$snap/.sent/hosts/"
 
 root() { docker exec "$name" sh -c "$1"; }
 user() { docker exec "$name" su - debian -c "$1"; }
@@ -82,15 +83,24 @@ for image in "${images[@]}"; do
   root 'test ! -e /root/.nimble' || fail "/root/.nimble was created"
   ok "service sync under sudo reads the admin's host file"
 
-  # 5. a host holds a snapshot: config changes are refused before anything is written
-  user "cd ~/.nimble && $n host set devbox shell=zsh" >/dev/null 2>&1 && fail "host set on a snapshot host"
-  user "cd ~/.nimble && $n tool select" >/dev/null 2>&1 && fail "tool select on a snapshot host"
-  user 'grep -q shell ~/.nimble/hosts/devbox.yaml' && fail "the snapshot was edited"
-  ok "config changes are refused on the host"
-
-  # 6. doctor agrees (bash only: no zsh dotfiles expected)
+  # 5. doctor agrees (bash only: no zsh dotfiles expected)
   user "$n doctor" >"$work/doctor.log" 2>&1 || { cat "$work/doctor.log"; fail "doctor"; }
   ok "doctor"
+
+  # 6. a host holds a snapshot: only its own host file changes there, and each change is
+  # noted for the workstation (its next nimble update devbox reads it back)
+  user "$n host create other" </dev/null >/dev/null 2>&1 && fail "host create on a snapshot host"
+  user "$n host set other shell=zsh" </dev/null >/dev/null 2>&1 && fail "host set of another host"
+  user "$n tool use go 1.0.0" </dev/null >/dev/null 2>&1 && fail "tool use (the shared pins) on a snapshot host"
+  user 'test ! -e ~/.nimble/.changed && ! grep -q shell ~/.nimble/hosts/devbox.yaml' || fail "a refused change was written"
+  user "$n host set devbox shell=bash" </dev/null >"$work/set.log" 2>&1 || { cat "$work/set.log"; fail "host set devbox on devbox"; }
+  user 'grep -qx "shell: bash" ~/.nimble/hosts/devbox.yaml && grep -qx "hosts: devbox shell=bash" ~/.nimble/.changed && ! grep -q shell ~/.nimble/.sent/hosts/devbox.yaml' ||
+    { cat "$work/set.log"; fail "the change wasn't made or noted"; }
+  user "$n changes" >"$work/changes.log" 2>&1 || { cat "$work/changes.log"; fail "changes"; }
+  grep -q "hosts: devbox shell=bash" "$work/changes.log" || { cat "$work/changes.log"; fail "changes doesn't show it"; }
+  user "$n status" >"$work/status.log" 2>&1 || true # the service isn't installed: status exits 1
+  grep -q "changed here" "$work/status.log" || { cat "$work/status.log"; fail "status doesn't mark it"; }
+  ok "only the host's own file changes on the host, noted for the workstation"
 
   docker stop "$name" >/dev/null
   name=""

@@ -11,6 +11,7 @@ import (
 	"github.com/nimblescape/nimble/pkg/config"
 	"github.com/nimblescape/nimble/pkg/hosts"
 	"github.com/nimblescape/nimble/pkg/nimble"
+	"github.com/nimblescape/nimble/pkg/services"
 	"github.com/nimblescape/nimble/pkg/setup"
 	"github.com/spf13/cobra"
 )
@@ -65,6 +66,9 @@ func local() error {
 	nimble.Info("template", tmpl)
 	if nimble.IsSnapshot() {
 		nimble.Info("config", nimble.Tilde(nimble.Repo())+" — "+nimble.SnapshotInfo())
+		if changed, _ := nimble.HostChanges(); changed {
+			r.Note("changed here", hostFile+" — not in the config repo until the workstation's next nimble update "+nimble.SnapshotHost()+" (nimble changes shows it)")
+		}
 	} else {
 		nimble.Info("config repo", nimble.Tilde(nimble.Repo())+" — "+repoState())
 	}
@@ -122,6 +126,22 @@ func local() error {
 		}
 	}
 
+	if found && nimble.IsDebian() && len(self.Services) > 0 {
+		nimble.Header("Services (from the host file)")
+		for _, s := range self.Services {
+			kind, msg := serviceLine(s, self.Name, services.State(s.Repo), services.Active(s.Repo))
+			label := s.Service + " " + s.Repo
+			switch kind {
+			case "ok":
+				r.OK(label, msg)
+			case "note":
+				r.Note(label, msg)
+			default:
+				r.Bad(label, msg)
+			}
+		}
+	}
+
 	var added []string
 	for _, f := range []string{".zshenv", ".zprofile", ".zshrc", ".bashrc", ".profile"} {
 		if n := len(setup.StubTail(f)); n > 0 {
@@ -133,6 +153,27 @@ func local() error {
 		r.Note("added by other tools", strings.Join(added, ", ")+" (kept as they are)")
 	}
 	return r.Done("run `nimble apply` (or `nimble update` to pull the config first)")
+}
+
+// serviceLine compares a service of the host file with this host: state is what systemd has
+// ("enabled", "disabled", "not installed"), running whether it runs now. kind is ok, note or bad.
+func serviceLine(s config.Service, host, state string, running bool) (kind, msg string) {
+	update := "nimble update (on " + host + ")"
+	switch wantOff := s.State == "disabled"; {
+	case state == "not installed" && wantOff:
+		return "note", "not installed (the host file has it disabled)"
+	case state == "not installed":
+		return "bad", "not installed here — nimble service add " + s.Service + " " + s.Repo + " (on " + host + ", it asks for the logins)"
+	case wantOff && state == "enabled":
+		return "bad", "enabled here, the host file says disabled — " + update
+	case wantOff:
+		return "ok", "disabled, as the host file says"
+	case state == "disabled":
+		return "bad", "disabled here, the host file says enabled — " + update
+	case !running:
+		return "bad", "enabled, but not running — systemctl status " + services.Unit(s.Repo)
+	}
+	return "ok", "enabled, running (" + services.Unit(s.Repo) + ")"
 }
 
 func nodeStatus(r *nimble.Report, p *config.Pins) {

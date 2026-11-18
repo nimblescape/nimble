@@ -3,6 +3,8 @@ package push
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/MakeNowJust/heredoc"
@@ -20,7 +22,8 @@ func NewCmdChanges() *cobra.Command {
 			the commits the upstream doesn't have yet, the hand edits not committed yet, and the
 			changed files — for the config repo, and the personal layer when it is a repo of
 			its own. It ends with a warning while something isn't published. --diff adds the
-			full diff, in git's pager.
+			full diff, in git's pager. On a host: what was changed in its host file there and
+			isn't in the config repo yet (the workstation's next nimble update <host> takes it).
 		`),
 		Example: heredoc.Doc(`
 			nimble changes          # what nimble push would publish
@@ -29,7 +32,7 @@ func NewCmdChanges() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if nimble.IsSnapshot() {
-				return errors.New("this host's config is a snapshot from the workstation — changes are made and published there")
+				return hostChanges(diff)
 			}
 			if !nimble.IsCheckout() {
 				return errors.New("no config repo at " + nimble.Tilde(nimble.Repo()) + " — run nimble init")
@@ -88,11 +91,51 @@ func unpublished(ps []pending) string {
 	return strings.Join(parts, " and ") + " not published yet — the other machines don't have " + them + ": nimble push"
 }
 
+// hostChanges is changes on a host: what was changed in its host file there since the
+// snapshot, which the workstation reads back with its next nimble update <host>.
+func hostChanges(diff bool) error {
+	name := nimble.SnapshotHost()
+	changed, log := nimble.HostChanges()
+	if !changed {
+		nimble.Say("hosts/" + name + ".yaml: nothing changed here since the " + nimble.SnapshotInfo())
+		return nil
+	}
+	nimble.Say("hosts/" + name + ".yaml changed here:")
+	if len(log) == 0 {
+		log = []string{"(edited by hand)"}
+	}
+	for _, l := range log {
+		fmt.Println("  " + l)
+	}
+	if diff {
+		cmd := exec.Command("diff", "-u", "--label", "as sent", "--label", "here",
+			nimble.RepoFile(nimble.SentDir, "hosts", name+".yaml"), nimble.RepoFile("hosts", name+".yaml"))
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		var exit *exec.ExitError
+		if err := cmd.Run(); err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) { // 1: they differ
+			return err
+		}
+	}
+	fmt.Println()
+	nimble.Warn(hostPending(name))
+	return nil
+}
+
+func hostPending(name string) string {
+	return "hosts/" + name + ".yaml changed here, not in the config repo yet — the workstation's next nimble update " + name + " takes it"
+}
+
 // WarnUnpublished warns when the config repo (or the personal layer) has changes that aren't
-// published yet. main calls it after every command; on a host (a snapshot, not a
-// checkout) it says nothing.
+// published yet. main calls it after every command; on a host it warns while its host file
+// has changes the workstation hasn't read back yet.
 func WarnUnpublished() {
-	if !nimble.IsCheckout() || nimble.IsSnapshot() {
+	if nimble.IsSnapshot() {
+		if changed, _ := nimble.HostChanges(); changed {
+			nimble.Warn(hostPending(nimble.SnapshotHost()) + " (nimble changes shows it)")
+		}
+		return
+	}
+	if !nimble.IsCheckout() {
 		return
 	}
 	var ps []pending

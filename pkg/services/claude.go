@@ -38,6 +38,11 @@ func unitPath(repo string) string { return "/etc/systemd/system/" + Unit(repo) }
 // Installed reports whether the repo's server is set up on this host.
 func Installed(repo string) bool { return nimble.Exists(unitPath(repo)) }
 
+// Active reports whether the repo's server runs right now.
+func Active(repo string) bool {
+	return exec.Command("systemctl", "is-active", "--quiet", Unit(repo)).Run() == nil
+}
+
 // State is "enabled", "disabled" or "not installed".
 func State(repo string) string {
 	if !Installed(repo) {

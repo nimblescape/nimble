@@ -49,10 +49,20 @@ func TestSnapshot(t *testing.T) {
 	})
 	joined := strings.Join(got, " ")
 	for _, want := range []string{"hosts/vm.yaml", "templates/prompt.yaml", "toolchain/pins.yaml", "shell/common.sh",
-		"keys/enclave/mac-htl.pub", "keys/yubikey/safe1.pub", "personal/git/config", "personal/nimble.yaml", "nimble.yaml", ".snapshot"} {
+		"keys/enclave/mac-htl.pub", "keys/yubikey/safe1.pub", "personal/git/config", "personal/nimble.yaml", "nimble.yaml", ".snapshot",
+		".sent/hosts/vm.yaml"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %s in %s", want, joined)
 		}
+	}
+	// the host file as sent: the base for merging the host's own changes back
+	read := func(rel string) string { b, _ := os.ReadFile(filepath.Join(dir, rel)); return string(b) }
+	if a, b := read("hosts/vm.yaml"), read(".sent/hosts/vm.yaml"); a == "" || a != b {
+		t.Errorf("sent copy %q differs from the host file %q", b, a)
+	}
+	// nothing about the workstation: no machine name
+	if m := read(".snapshot"); strings.Contains(m, "from") || !strings.HasPrefix(m, "host: vm\n") {
+		t.Errorf("marker %q", m)
 	}
 	for _, not := range []string{"hosts/swan.yaml", "templates/dev.yaml", "keys/enclave/mac-ssh.pub", "personal/macos/Brewfile", "cli/main.go"} {
 		if strings.Contains(joined, not) {
@@ -69,12 +79,52 @@ func TestSnapshot(t *testing.T) {
 	}
 }
 
+// The read-back script answers with the sent copy, the host file and the change log — or
+// nothing on a host without a sent copy.
+func TestFetchScript(t *testing.T) {
+	home := t.TempDir()
+	fetch := func() ([]byte, []byte, []string, error) {
+		c := exec.Command("sh", "-c", fetchScript("swan"))
+		c.Env = append(os.Environ(), "HOME="+home)
+		out, err := c.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return parseFetched("swan", string(out))
+	}
+	if sent, _, _, err := fetch(); sent != nil || err != nil { // not set up yet
+		t.Fatalf("no ~/.nimble: %q %v", sent, err)
+	}
+	w := func(rel, body string) {
+		p := filepath.Join(home, ".nimble", rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	w("hosts/swan.yaml", "address: swan\ntools: [go, docker]\n")
+	if sent, _, _, _ := fetch(); sent != nil {
+		t.Fatal("answered without a sent copy")
+	}
+	w(".sent/hosts/swan.yaml", "address: swan\ntools: [go]\n")
+	sent, now, log, err := fetch()
+	if err != nil || string(sent) != "address: swan\ntools: [go]\n" || string(now) != "address: swan\ntools: [go, docker]\n" || len(log) != 0 {
+		t.Fatalf("got %q %q %q %v", sent, now, log, err)
+	}
+	w(".changed", "hosts: swan add tools docker\nhosts: swan shell=bash\n")
+	if _, _, log, _ := fetch(); len(log) != 2 || log[1] != "hosts: swan shell=bash" {
+		t.Fatalf("log %q", log)
+	}
+	if _, _, _, err := FetchChanges("swan; rm -rf ~"); err == nil {
+		t.Fatal("took a name that isn't one")
+	}
+}
+
 // The unpack script must replace the old snapshot only with a complete new one, and keep
 // cache/, backup/ and local.sh.
 func TestUnpack(t *testing.T) {
 	home := t.TempDir()
 	old := filepath.Join(home, ".nimble")
-	for rel, body := range map[string]string{"nimble.yaml": "old\n", "hosts/a.yaml": "old\n", "cache/host": "a\n", "local.sh": "mine\n", ".snapshot": "old\n"} {
+	for rel, body := range map[string]string{"nimble.yaml": "old\n", "hosts/a.yaml": "old\n", "cache/host": "a\n", "local.sh": "mine\n", ".snapshot": "old\n",
+		".sent/hosts/a.yaml": "old\n", ".changed": "hosts: a shell=bash\n"} {
 		p := filepath.Join(old, rel)
 		os.MkdirAll(filepath.Dir(p), 0o755)
 		os.WriteFile(p, []byte(body), 0o644)
@@ -112,8 +162,8 @@ func TestUnpack(t *testing.T) {
 	if read("nimble.yaml") != "new\n" || read(".snapshot") != "new\n" || read("hosts/b.yaml") != "new\n" {
 		t.Fatal("the new snapshot isn't in place")
 	}
-	if read("hosts/a.yaml") != "" {
-		t.Fatal("a file of the old snapshot stayed")
+	if read("hosts/a.yaml") != "" || read(".sent/hosts/a.yaml") != "" || read(".changed") != "" {
+		t.Fatal("a file of the old snapshot stayed (the host's changes are read back before)")
 	}
 	if read("cache/host") != "a\n" || read("local.sh") != "mine\n" {
 		t.Fatal("cache/ or local.sh didn't stay")

@@ -30,9 +30,10 @@ func NewCmdService() *cobra.Command {
 		Long: heredoc.Doc(`
 			Services live in their host's file (services:). add installs and enables one,
 			disable stops it and keeps it installed, enable starts it again, remove uninstalls
-			it. Without --host the commands act on this machine; without <repo> they offer the
-			repo checked out in the current folder (its origin, e.g. owner/app) as the
-			default, and any repo must exist on GitHub.
+			it. Without --host the commands act on this machine — on a host too: the
+			workstation's next nimble update <host> takes the change into the config repo.
+			Without <repo> they offer the repo checked out in the current folder (its origin,
+			e.g. owner/app) as the default, and any repo must exist on GitHub.
 		`),
 	}
 	cmd.PersistentFlags().StringVar(&host, "host", "", "the host (default: this machine)")
@@ -40,6 +41,9 @@ func NewCmdService() *cobra.Command {
 	cmd.RegisterFlagCompletionFunc("host", hosts.CompleteHostNames)
 	pick := func() (config.Host, error) {
 		if host != "" {
+			if err := nimble.EditableHost(host); err != nil { // on a host: only its own
+				return config.Host{}, err
+			}
 			h, ok := config.FindHost(host)
 			if !ok {
 				return h, errors.New("no host " + host)
@@ -49,9 +53,6 @@ func NewCmdService() *cobra.Command {
 		h, ok := hosts.Self("")
 		if !ok {
 			return h, errors.New("this machine has no host file — pass --host or create one")
-		}
-		if nimble.IsSnapshot() {
-			return h, errors.New("this host gets its config from the workstation — run it there with --host " + h.Name)
 		}
 		return h, nil
 	}
@@ -213,6 +214,10 @@ func change(verb, short string, pick func() (config.Host, error),
 		Use: verb + " <service> [<repo>]", Short: short, Args: cobra.MaximumNArgs(2),
 		Example: fmt.Sprintf("  nimble service %s claude owner/app --host devbox\n  cd ~/src/app && nimble service %s claude --host devbox", verb, verb),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			h, err := pick() // first: on a host it refuses another host's file before asking anything
+			if err != nil {
+				return err
+			}
 			svc, err := nimble.Arg(args, 0, "service", []string{"claude"})
 			if err != nil {
 				return err
@@ -226,9 +231,12 @@ func change(verb, short string, pick func() (config.Host, error),
 			if _, ok := known[args[0]]; !ok {
 				return fmt.Errorf("unknown service %q (known: claude)", args[0])
 			}
-			h, err := pick()
-			if err != nil {
-				return err
+			if self, ok := hosts.Self(""); h.Managed() && (!ok || self.Name != h.Name) {
+				// another host: first take in what was changed there since its last snapshot
+				if err := update.ReadBack(h.Name); err != nil {
+					return err
+				}
+				h, _ = config.FindHost(h.Name)
 			}
 			list, err := edit(h.Services, config.Service{Service: args[0], Repo: args[1]})
 			if err != nil {

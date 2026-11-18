@@ -147,7 +147,7 @@ func InitHost(name string) error {
 	if err := nimble.Wait("send nimble", func() error { return remote.SendBinary(name) }); err != nil {
 		return err
 	}
-	if err := nimble.Wait("send its config snapshot to ~/.nimble", func() error { return remote.SendSnapshot(name) }); err != nil {
+	if err := update.SendConfig(name); err != nil { // a host set up before: what was changed there comes back first
 		return err
 	}
 
