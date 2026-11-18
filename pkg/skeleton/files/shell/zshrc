@@ -1,0 +1,6 @@
+# zsh, interactive — loaded by ~/.zshrc (managed by nimble).
+source "$NIMBLE_HOME/shell/common.sh"
+[[ -r "$NIMBLE_HOME/personal/shell/common.sh" ]] && source "$NIMBLE_HOME/personal/shell/common.sh"
+for _f in "$NIMBLE_HOME"/shell/zsh/*.zsh(N) "$NIMBLE_HOME"/personal/shell/zsh/*.zsh(N); do source "$_f"; done; unset _f
+if (( $+commands[starship] )); then eval "$(starship init zsh)"; elif [[ -n $SSH_CONNECTION ]]; then PROMPT='%B%F{yellow}%n@%m%f%b %~ %# '; else PROMPT='%n@%m %~ %# '; fi   # tool: starship
+[[ -r "$NIMBLE_HOME/local.sh" ]] && source "$NIMBLE_HOME/local.sh"

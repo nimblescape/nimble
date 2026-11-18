@@ -1,0 +1,35 @@
+name: Test
+
+# Every push and pull request: the unit tests, and the host test — a Debian host set up and
+# hardened in a container the way a workstation does it (test/host.sh).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - run: test -z "$(gofmt -l cmd pkg main.go)"
+      - run: go vet ./...
+      - run: go test ./...
+
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - run: test/host.sh

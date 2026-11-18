@@ -1,0 +1,34 @@
+# Builds nimble releases: binaries for macOS and Linux, Debian packages, checksums.
+# Runs in .github/workflows/release.yml when a version tag (v*) is pushed.
+version: 2
+project_name: nimble
+
+builds:
+  - main: .
+    binary: nimble
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE]
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - package_name: nimble
+    vendor: nimblescape
+    homepage: https://github.com/nimblescape/nimble
+    maintainer: nimblescape
+    description: Set up and keep identical the developer environment on workstations and Debian hosts
+    license: MIT
+    formats: [deb]
+    bindir: /usr/bin
+
+changelog:
+  use: github-native

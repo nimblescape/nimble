@@ -1,0 +1,3 @@
+# The default template: nimble sets up the shell and the linked config, installs nothing.
+description: shell and config only
+tools: []

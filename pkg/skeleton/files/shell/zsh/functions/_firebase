@@ -1,0 +1,19 @@
+#compdef firebase
+# Minimal completion for the Firebase CLI (top-level commands only).
+
+local -a commands=(
+  login logout init use deploy serve open
+  emulators:start emulators:exec emulators:export
+  projects:list projects:addfirebase
+  apps:list apps:create apps:sdkconfig
+  functions:log functions:shell functions:delete
+  hosting:channel:create hosting:channel:deploy
+  hosting:channel:list hosting:channel:delete
+  hosting:clone hosting:disable
+)
+
+if (( CURRENT == 2 )); then
+  compadd -- "${commands[@]}"
+else
+  _files
+fi

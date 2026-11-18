@@ -1,0 +1,8 @@
+# An example: pick from the catalog (nimble tool list), then use it for hosts:
+# nimble host create <name> --template dev
+description: development machine
+tools:
+  - starship
+  - node
+  - go
+  - python
