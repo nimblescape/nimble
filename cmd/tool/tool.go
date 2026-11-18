@@ -26,10 +26,10 @@ func NewCmdTool() *cobra.Command {
 			Without --host it acts on this machine; with --host (from the workstation) it
 			records the change, then sends the config to that host and applies it there.
 
-			The languages (node, go, rust, python) and pinned npm packages run at the version in
-			toolchain/pins.yaml, the same on every machine: tool list shows them with their
-			updates, tool use picks one, tool update writes the updates. use and update only edit
-			pins.yaml; nimble push shares it.
+			The languages (node, go, rust, python) run at the version in toolchain/pins.yaml,
+			the same on every machine: tool list shows them with their updates, tool use picks
+			one, tool update writes the updates. use and update only edit pins.yaml; nimble
+			push shares it.
 		`),
 	}
 	sel := newSelect()

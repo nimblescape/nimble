@@ -240,7 +240,7 @@ The tool catalog is built into nimble; `nimble tool list` shows it with ✓ (wan
 | Tool | macOS | Debian | `nimble update` keeps it current with |
 |---|---|---|---|
 | `starship` | Homebrew | newest release binary in `~/.local/bin` | `brew upgrade` / a newer release |
-| `node` | the pinned Node through nvm (nvm is installed with it when missing), the npm globals; installed means the pinned Node is there | the same | nvm and the unpinned npm packages move to their newest release; Node only moves with its pin |
+| `node` | the pinned Node through nvm (nvm is installed with it when missing), the newest npm and `@nimblescape/typescript` (the `ts` command), and the TypeScript `ts install --global` picks; installed means the pinned Node is there | the same | nvm, npm and `ts` move to their newest release, TypeScript to the one `ts` picks; Node only moves with its pin |
 | `go` | the pinned Go in `~/sdk`, the Go tools | the same | — |
 | `python` | uv, the pinned Python, the uv tools | the same | `uv self update` |
 | `rust` | rustup and the pinned toolchain | the same | — |
@@ -254,8 +254,9 @@ The tool catalog is built into nimble; `nimble tool list` shows it with ✓ (wan
 | `task` | Homebrew (`go-task`) | Task's release binary in `~/.local/bin` | `brew upgrade` / a newer release |
 | `iterm2` | Homebrew cask (skipped if iTerm.app exists) | skipped (macOS only) | its own updater |
 
-- On a Mac the tools come from Homebrew; without it, nimble says so and where to get it.
-- What YubiKeys need is not a tool: every workstation gets it (see [The ssh client](#the-ssh-client)). A template that still lists the earlier tool `yubikey` keeps working; apply skips it and says to delete the line.
+- On a Mac the tools come from Homebrew; without it, nimble runs Homebrew's installer first (see [Applying the config to a machine](#applying-the-config-to-a-machine)).
+- What YubiKeys need is not a tool: every workstation gets it (see [The ssh client](#the-ssh-client)).
+- **ts and TypeScript come with `node`.** After the pinned Node, nimble installs the newest `@nimblescape/typescript` and runs `ts install --global` without a terminal, so ts doesn't ask: it installs the TypeScript of the current VS Code (looked up online; offline its built-in fallback). `nimble update` repeats both, so TypeScript follows VS Code.
 - **Install** runs on every apply and installs what is missing. Tools install in catalog order; `firebase` pulls in `node`. One tool failing is reported and the others still install; the updates and the later steps still run, and apply ends with an error. On a host, hardening and the services run regardless.
 - **Update** runs with `apply --upgrade`, i.e. on `nimble update`. Tools that aren't installed are skipped; a failure is a warning.
 - **Vendor apt repositories** get their key in `/etc/apt/keyrings/<name>.gpg` and a list in `/etc/apt/sources.list.d/<name>.list`. For repositories with a Debian codename, nimble uses this release's codename, or the newest older Debian release (trixie, bookworm) the vendor serves. If `apt-get update` fails after adding a list, the list is removed again.
@@ -272,8 +273,6 @@ node: 26.8.1
 go: 1.27.2
 rust: 1.100.0
 python: 3.12.15          # the default python / python3, and uv's global pin
-npmGlobal:               # name (follows the newest release) or name@version (pinned)
-  - npm
 goTools:                 # go install targets; @latest unless a version is given
   - golang.org/x/tools/gopls
 uvTools: []              # uv tool install specs
@@ -284,7 +283,7 @@ uvTools: []              # uv tool install specs
 | Language | Where | How it becomes the default |
 |---|---|---|
 | Node | nvm in `~/.nvm` (moved to its newest release by `nimble update`); `nvm install <version>` | `nvm alias default <version>` |
-| npm globals | `npm install -g` into the pinned Node | pinned packages are moved to exactly their version; unpinned ones are installed if missing and move to the newest release on `nimble update` |
+| npm, ts, TypeScript | `npm install -g` into the pinned Node: the newest `npm` and `@nimblescape/typescript`; then `ts install --global` installs TypeScript | installed when missing; `nimble update` moves them to their newest release |
 | Go | go.dev's release unpacked into `~/sdk/go<version>`, with the `.unpacked-success` marker (the layout of golang.org/dl and VS Code's Go extension) | `~/.local/go` is a symlink to it, first in PATH. nimble sets no `GOTOOLCHAIN` |
 | Go tools | `go install <target>@latest` into `$GOBIN`, else `$GOPATH/bin` | installed once if missing, not upgraded |
 | Rust | rustup (`rustup-init --profile default`) in `~/.cargo` | `rustup default <version>` |
@@ -295,9 +294,9 @@ Older versions are never removed (`~/sdk`, nvm, rustup and uv keep them), so swi
 
 ### nimble tool use
 
-`nimble tool use [tool] [version]` pins a version. Without arguments it shows a list of the pinned languages (`node`, `go`, `rust`, `python`, each npm package such as `npm`), then the language's releases, newest first, with the current one and the bugfix and feature updates marked, and for Node each release of an LTS line (`LTS Krypton`). Type to filter. With a version, it takes the newest release that matches exactly or by prefix (`nimble tool use go 1.28` takes the newest 1.28.x). An npm package can also be set to `latest`: it then follows the newest release until it is pinned again.
+`nimble tool use [language] [version]` pins a version. Without arguments it shows a list of the pinned languages (`node`, `go`, `rust`, `python`), then the language's releases, newest first, with the current one and the bugfix and feature updates marked, and for Node each release of an LTS line (`LTS Krypton`). Type to filter. With a version, it takes the newest release that matches exactly or by prefix (`nimble tool use go 1.28` takes the newest 1.28.x).
 
-The release lists come from nodejs.org, go.dev (stable releases), GitHub (`rust-lang/rust`), python-build-standalone's newest release (what uv installs) and the npm registry. Only plain `x.y.z` releases count.
+The release lists come from nodejs.org, go.dev (stable releases), GitHub (`rust-lang/rust`) and python-build-standalone's newest release (what uv installs). Only plain `x.y.z` releases count.
 
 `tool use` edits `toolchain/pins.yaml` in place, keeping comments and layout. It doesn't commit or install: `nimble update` installs, `nimble push` commits and shares, `nimble update all` rolls it out.
 
@@ -307,7 +306,7 @@ A **bugfix update** is the newest release that keeps compatibility, by each lang
 
 | Pin | Bugfix updates | Feature updates |
 |---|---|---|
-| Node, Go, Python, npm packages | the newest patch release of the same `x.y` | a newer minor or major |
+| Node, Go, Python | the newest patch release of the same `x.y` | a newer minor or major |
 | Rust | the newest `1.x` release (Rust ships its fixes there under its stability promise) | a new major |
 
 - `nimble tool list` shows, after the catalog, each pin with its bugfix and feature updates (the release lists are looked up in parallel; a lookup that fails shows as "could not check"), and writes nothing.

@@ -51,7 +51,7 @@ Commands that change the config check it and commit it (`tool use` and `tool upd
 | `host create\|set\|edit\|list\|show\|remove` | The machines, one YAML file each; `show` prints one merged with its template and the defaults |
 | `template create\|set\|edit\|list\|show\|default\|remove` | Which tools and login shell a machine gets |
 | `tool list`, `tool select [--host h]` | The tool catalog and updates of the pinned versions; pick a machine's tools (check to install, uncheck to uninstall), here or on a host from the workstation |
-| `tool use [tool] [version]` | Pin Node, Go, Rust, Python or an npm package to a version picked from its releases |
+| `tool use [language] [version]` | Pin Node, Go, Rust or Python to a version picked from its releases |
 | `tool update [name…]` | Write bugfix updates of the pinned languages (feature updates on request) |
 | `service list\|add\|enable\|disable\|remove [--host h]` | A Claude Code server per repo on a host |
 | `key list\|enclave\|yubikey\|remove` | Daily keys (create, renew) and YubiKey backups (set up, register) |

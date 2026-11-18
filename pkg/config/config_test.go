@@ -23,7 +23,7 @@ func repo(t *testing.T) string {
 	write("templates/dev.yaml", "description: dev host\nos: debian\nshell: zsh\ntools:\n  - starship\n  - go\n")
 	write("hosts/swan.yaml", "# swan, the build host\naddress: swan.example.com # public name\nuser: debian\ntemplate: dev\ntools: [docker]\n")
 	write("hosts/vm.yaml", "address: vm.example.com\nuser: hannes\ndomain: school\nmode: ssh\n")
-	write("toolchain/pins.yaml", "# pins\nnode: 26.8.1\ngo: 1.27.2 # go\npython: 3.12.15\nnpmGlobal:\n  - npm@12.2.1\n  - \"@nimblescape/typescript\"\n")
+	write("toolchain/pins.yaml", "# pins\nnode: 26.8.1\ngo: 1.27.2 # go\npython: 3.12.15\nrust: 1.100.0\n")
 	return dir
 }
 
@@ -110,14 +110,14 @@ func TestEditsKeepComments(t *testing.T) {
 
 func TestReplaceVersion(t *testing.T) {
 	dir := repo(t)
-	for _, step := range [][4]string{{"go", "", "1.27.2", "1.27.4"}, {"python", "", "3.12.15", "3.12.16"}, {"npmGlobal", "npm", "12.2.1", "12.2.2"}} {
-		if err := ReplaceVersion(step[0], step[1], step[2], step[3]); err != nil {
+	for _, step := range [][3]string{{"go", "1.27.2", "1.27.4"}, {"python", "3.12.15", "3.12.16"}, {"rust", "1.100.0", "1.101.0"}} {
+		if err := ReplaceVersion(step[0], step[1], step[2]); err != nil {
 			t.Fatal(err)
 		}
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "toolchain/pins.yaml"))
 	s := string(b)
-	for _, want := range []string{"go: 1.27.4 # go", "python: 3.12.16", "- npm@12.2.2", "node: 26.8.1", "# pins"} {
+	for _, want := range []string{"go: 1.27.4 # go", "python: 3.12.16", "rust: 1.101.0", "node: 26.8.1", "# pins"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q in:\n%s", want, s)
 		}
@@ -126,24 +126,20 @@ func TestReplaceVersion(t *testing.T) {
 	if err != nil || p.Go != "1.27.4" || p.Python != "3.12.16" {
 		t.Fatalf("pins %+v %v", p, err)
 	}
+	if err := ReplaceVersion("node", "26.8.0", "26.8.2"); err == nil { // 26.8.0 is in no line
+		t.Error("a version that isn't there was replaced")
+	}
 }
 
-func TestSetNPMGlobal(t *testing.T) {
-	dir := repo(t)
-	if err := SetNPMGlobal("@nimblescape/typescript", "0.3.4"); err != nil {
-		t.Fatal(err)
-	}
-	if err := SetNPMGlobal("npm", ""); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(filepath.Join(dir, "toolchain/pins.yaml"))
-	for _, want := range []string{`- "@nimblescape/typescript@0.3.4"`, "  - npm\n"} {
-		if !strings.Contains(string(b), want) {
-			t.Errorf("missing %q in:\n%s", want, b)
+func TestReplaceToken(t *testing.T) {
+	for _, c := range []struct{ line, old, new, want string }{
+		{"go: 1.27.2 # go", "1.27.2", "1.27.4", "go: 1.27.4 # go"},
+		{"go: 1.27.21", "1.27.2", "1.27.4", "go: 1.27.21"},         // part of a longer version
+		{"rust: 11.100.0", "1.100.0", "1.101.0", "rust: 11.100.0"}, // the same
+	} {
+		if got := replaceToken(c.line, c.old, c.new); got != c.want {
+			t.Errorf("replaceToken(%q, %q) = %q, want %q", c.line, c.old, got, c.want)
 		}
-	}
-	if p, err := LoadPins(); err != nil || p.NPMGlobal[1] != "@nimblescape/typescript@0.3.4" {
-		t.Fatalf("%+v %v", p, err)
 	}
 }
 
@@ -178,19 +174,5 @@ func TestValidateCatches(t *testing.T) {
 
 	if ValidLabel("my-lab") == nil || ValidLabel("") == nil || ValidLabel("lab_2") != nil {
 		t.Error("ValidLabel")
-	}
-}
-
-func TestReplaceSpec(t *testing.T) {
-	for _, c := range []struct{ line, old, new, want string }{
-		{`  - typescript@6.0.3`, "typescript@6.0.3", "typescript@6.0.4", `  - typescript@6.0.4`},
-		{`  - "@scope/typescript@6.0.3"`, "typescript@6.0.3", "typescript@6.0.4", `  - "@scope/typescript@6.0.3"`},
-		{`  - "@scope/typescript@6.0.3" # x`, "@scope/typescript@6.0.3", "@scope/typescript@6.1.0", `  - "@scope/typescript@6.1.0" # x`},
-		{`  - pnpm@9.0.0`, "npm@9.0.0", "npm@9.0.1", `  - pnpm@9.0.0`},
-		{`  - npm@9.0.01`, "npm@9.0.0", "npm@9.0.1", `  - npm@9.0.01`},
-	} {
-		if got := replaceSpec(c.line, c.old, c.new); got != c.want {
-			t.Errorf("replaceSpec(%q, %q) = %q, want %q", c.line, c.old, got, c.want)
-		}
 	}
 }

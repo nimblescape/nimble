@@ -13,18 +13,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newUse is tool use: pin a language or npm package to a version picked from its releases.
+// newUse is tool use: pin a language to a version picked from its releases.
 func newUse() *cobra.Command {
 	return &cobra.Command{
-		Use:   "use [tool] [version]",
-		Short: "Pin a language or npm package to a version picked from its releases",
+		Use:   "use [language] [version]",
+		Short: "Pin a language (node, go, rust, python) to a version picked from its releases",
 		Long: heredoc.Doc(`
 			Choose the version of a language every machine uses, the way nvm chooses Node: pick the
 			language and the version from lists (current, bugfix and feature updates marked, and
 			Node's LTS releases), or name them. It writes toolchain/pins.yaml; nimble update then
-			installs it with the language's own tool — nvm for Node, npm for the global npm
-			packages, go.dev's release in ~/sdk for Go, rustup for Rust, uv for Python — and
-			nimble push shares the pin.
+			installs it with the language's own tool — nvm for Node, go.dev's release in ~/sdk
+			for Go, rustup for Rust, uv for Python — and nimble push shares the pin.
 		`),
 		Example: heredoc.Doc(`
 			nimble tool use                # pick a language, then its version
@@ -42,8 +41,8 @@ func newUse() *cobra.Command {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 			var out []string
-			for _, e := range versions.Selectable(p) {
-				out = append(out, e.Label+"\t"+show(e.Current)+" ("+e.Installer+")")
+			for _, e := range versions.Entries(p) {
+				out = append(out, e.Label+"\t"+e.Current+" ("+e.Installer+")")
 			}
 			return out, cobra.ShellCompDirectiveNoFileComp
 		},
@@ -52,7 +51,7 @@ func newUse() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			es := versions.Selectable(p)
+			es := versions.Entries(p)
 			name, err := nimble.Arg(args, 0, "language", versions.Labels(es))
 			if err != nil {
 				return err
@@ -74,9 +73,7 @@ func newUse() *cobra.Command {
 			}
 
 			var want string
-			if len(args) > 1 && args[1] == "latest" && e.Key == "npmGlobal" {
-				want = "latest" // an npm package can follow its newest release
-			} else if len(args) > 1 {
+			if len(args) > 1 {
 				if want = match(list, args[1]); want == "" {
 					return fmt.Errorf("%s has no release %s", e.Label, args[1])
 				}
@@ -84,17 +81,14 @@ func newUse() *cobra.Command {
 				return err
 			}
 
-			if want == e.Current || (want == "latest" && e.Current == "") {
-				nimble.Say(e.Label + " is pinned to " + show(e.Current) + " already")
+			if want == e.Current {
+				nimble.Say(e.Label + " is pinned to " + e.Current + " already")
 				return nil
-			}
-			if want == "latest" {
-				want = ""
 			}
 			if err := versions.Write(e, want); err != nil {
 				return err
 			}
-			nimble.Say(fmt.Sprintf("%s: %s → %s in toolchain/pins.yaml", e.Label, show(e.Current), show(want)))
+			nimble.Say(fmt.Sprintf("%s: %s → %s in toolchain/pins.yaml", e.Label, e.Current, want))
 			nimble.Step("install it: nimble update · share it: nimble push · hosts: nimble update all")
 			return nil
 		},
@@ -121,13 +115,6 @@ func pick(e versions.Entry, list []string) (string, error) {
 	}
 	var options []string
 	label := map[string]string{}
-	if e.Key == "npmGlobal" {
-		o := "latest — follow the newest release"
-		if e.Current == "" {
-			o += "  (current)"
-		}
-		options, label[o] = append(options, o), "latest"
-	}
 	marks := map[string]string{}
 	if e.Marks != nil {
 		marks, _ = e.Marks() // only extra notes: the list works without them
@@ -163,11 +150,4 @@ func pick(e versions.Entry, list []string) (string, error) {
 		return "", err
 	}
 	return label[chosen], nil
-}
-
-func show(v string) string {
-	if v == "" {
-		return "latest"
-	}
-	return v
 }
