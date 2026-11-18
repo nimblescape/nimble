@@ -238,6 +238,11 @@ func change(verb, short string, pick func() (config.Host, error),
 				}
 				h, _ = config.FindHost(h.Name)
 			}
+			if verb == "add" {
+				if done, err := installedAlready(h, args[0], args[1]); done || err != nil {
+					return err
+				}
+			}
 			list, err := edit(h.Services, config.Service{Service: args[0], Repo: args[1]})
 			if err != nil {
 				return fmt.Errorf("%s %s on %s: %w", args[0], args[1], h.Name, err)
@@ -258,6 +263,58 @@ func change(verb, short string, pick func() (config.Host, error),
 			return nimble.Record(fmt.Sprintf("hosts: %s service %s %s %s", h.Name, verb, args[0], args[1]), "hosts")
 		},
 	}
+}
+
+// installedAlready handles add for a server that is installed on the host already: nothing
+// is installed again. It says how it stands and what would start it, and records it in the
+// host file when only that was missing (installed from another workstation, or before the
+// host file had it). done is false when it isn't installed, or the host can't be asked.
+func installedAlready(h config.Host, svc, repo string) (done bool, err error) {
+	state, running := probe(h, repo)
+	if state == "" || state == "not installed" {
+		return false, nil
+	}
+	where, flag := "on "+h.Name, " --host "+h.Name
+	if self, ok := hosts.Self(""); ok && self.Name == h.Name {
+		where, flag = "here", ""
+	}
+	nimble.Say(svc + " " + repo + " is installed " + where + " already (" + services.Describe(state, running) + ") — nothing to install")
+	switch {
+	case state == "disabled":
+		nimble.Step("start it: nimble service enable " + svc + " " + repo + flag)
+	case !running:
+		nimble.Step("it doesn't run — " + where + ": sudo systemctl status " + services.Unit(repo) + ", then sudo systemctl restart " + services.Unit(repo))
+	}
+	for _, s := range h.Services {
+		if s.Service == svc && s.Repo == repo {
+			return true, nil
+		}
+	}
+	list := append(append([]config.Service{}, h.Services...), config.Service{Service: svc, Repo: repo, State: state})
+	if err := config.SetHostServices(h.Name, list); err != nil {
+		return true, err
+	}
+	return true, nimble.Record(fmt.Sprintf("hosts: %s service add %s %s (installed already)", h.Name, svc, repo), "hosts")
+}
+
+// probe reads how a repo's server stands on h: here directly, on another host over ssh
+// ("" when it can't be read). Tests replace it.
+var probe = func(h config.Host, repo string) (state string, running bool) {
+	if self, ok := hosts.Self(""); ok && self.Name == h.Name {
+		if !nimble.IsDebian() {
+			return "", false // a Mac: services run on Debian hosts
+		}
+		return services.State(repo), services.Active(repo)
+	}
+	if !h.Managed() {
+		return "", false
+	}
+	var out string
+	_ = nimble.Wait("check "+repo+" on "+h.Name, func() error {
+		out = hosts.Output(h.Name, services.StateScript(repo))
+		return nil
+	})
+	return services.ParseState(out)
 }
 
 // currentRepo names the repo checked out in the current folder, from its origin remote:

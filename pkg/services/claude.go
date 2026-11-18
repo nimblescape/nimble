@@ -43,6 +43,41 @@ func Active(repo string) bool {
 	return exec.Command("systemctl", "is-active", "--quiet", Unit(repo)).Run() == nil
 }
 
+// StateScript prints, on a host and without root, how a repo's server stands — for a
+// check from the workstation; ParseState reads it.
+func StateScript(repo string) string {
+	return fmt.Sprintf(`u='%[1]s'; if [ -f '/etc/systemd/system/%[1]s' ]; then `+
+		`if systemctl is-enabled --quiet "$u"; then printf enabled; else printf disabled; fi; `+
+		`if systemctl is-active --quiet "$u"; then echo ' running'; else echo; fi; `+
+		`else echo 'not installed'; fi`, Unit(repo))
+}
+
+// ParseState reads StateScript's answer: State's state and Active's running, or "" when the
+// answer isn't one (the host couldn't be asked).
+func ParseState(out string) (state string, running bool) {
+	f := strings.Fields(out)
+	switch {
+	case strings.TrimSpace(out) == "not installed":
+		return "not installed", false
+	case len(f) > 0 && (f[0] == "enabled" || f[0] == "disabled"):
+		return f[0], len(f) > 1 && f[1] == "running"
+	}
+	return "", false
+}
+
+// Describe says how a server stands, from State and Active.
+func Describe(state string, running bool) string {
+	switch {
+	case state == "not installed", state == "disabled" && !running:
+		return state
+	case state == "disabled":
+		return "disabled, but running"
+	case running:
+		return "enabled, running"
+	}
+	return "enabled, not running"
+}
+
 // State is "enabled", "disabled" or "not installed".
 func State(repo string) string {
 	if !Installed(repo) {

@@ -2,10 +2,34 @@ package services
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// The workstation asks a host how a server stands, without root.
+func TestState(t *testing.T) {
+	for out, want := range map[string]string{
+		"not installed":    "not installed",
+		"enabled running":  "enabled, running",
+		"enabled\n":        "enabled, not running",
+		"disabled":         "disabled",
+		"disabled running": "disabled, but running",
+	} {
+		if s, r := ParseState(out); Describe(s, r) != want {
+			t.Errorf("%q: %q", out, Describe(s, r))
+		}
+	}
+	if s, _ := ParseState(""); s != "" { // the host couldn't be asked
+		t.Errorf("empty answer: %q", s)
+	}
+	// here, without the unit file
+	out, err := exec.Command("sh", "-c", StateScript("owner/nosuchrepo")).Output()
+	if s, _ := ParseState(string(out)); err != nil || s != "not installed" {
+		t.Errorf("script: %q %v", out, err)
+	}
+}
 
 func TestUnit(t *testing.T) {
 	if Unit("nimblescape/nimbleSEC") != "claude-nimblescape-nimbleSEC.service" || Checkout("nimblescape/nimbleSEC") != "/home/claude/nimblescape/nimbleSEC" {
