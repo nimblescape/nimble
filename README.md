@@ -37,17 +37,17 @@ nimble update all --yubikey           # reach the hosts with a YubiKey backup (n
 nimble push                           # check, commit and publish config changes
 ```
 
-Commands that change the config check it and commit it (`tool use` and `tool update` only edit `pins.yaml`; `push` commits that); `nimble push` publishes, and machines pick changes up with `nimble update`. Any missing argument is asked for on a terminal: a list to pick from, an editable default, answers checked before they are taken. Hand edits to the YAML files are fine too: nimble validates them.
+Commands that change the config check it and commit it (`tool use` and `tool update` only edit `pins.yaml`; `push` commits that); `nimble push` publishes, and machines pick changes up with `nimble update`. On a host, `tool select`, `service` and `host set|edit` change its own host file; the workstation's next `nimble update <host>` merges that into the config repo (a clash opens in the editor) and commits it. Any missing argument is asked for on a terminal: a list to pick from, an editable default, answers checked before they are taken. Hand edits to the YAML files are fine too: nimble validates them.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `init [host…]` | Set this machine up (`--new` creates a config repo, `--repo` clones one), or a Debian host from the workstation |
-| `update [host…\|all]` | Pull and apply here, or send managed hosts their snapshot and nimble, then harden and apply there |
-| `status`, `doctor [host…\|all]` | Wanted vs. installed; a health check of shell, links, keys, ssh config and hardening |
+| `update [host…\|all]` | Pull and apply here, or read back what managed hosts changed, send them their snapshot and nimble, then harden and apply there |
+| `status`, `doctor [host…\|all]` | Wanted vs. installed (tools, and on a host its services: enabled, running); a health check of shell, links, keys, ssh config and hardening |
 | `push [-m msg] [--diff]` | Check the YAML, pull, show what goes out (`--diff`: the full diff) and ask, push |
-| `changes [--diff]` | What has changed and isn't published yet: what the next `push` publishes |
+| `changes [--diff]` | What has changed and isn't published yet: what the next `push` publishes (on a host: what changed in its host file there) |
 | `host create\|set\|edit\|list\|show\|remove` | The machines, one YAML file each; `show` prints one merged with its template and the defaults |
 | `template create\|set\|edit\|list\|show\|default\|remove` | Which tools and login shell a machine gets |
 | `tool list`, `tool select [--host h]` | The tool catalog and updates of the pinned versions; pick a machine's tools (check to install, uncheck to uninstall), here or on a host from the workstation |

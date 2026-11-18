@@ -295,21 +295,21 @@ func AgentHasTrustedKey() bool {
 // IsSnapshot reports whether ~/.nimble is a host's config snapshot (not the repo).
 func IsSnapshot() bool { return Exists(RepoFile(".snapshot")) }
 
-// SnapshotInfo describes the snapshot: where and when it came from.
+// SnapshotInfo describes the snapshot: which commit, and when it was sent.
 func SnapshotInfo() string {
-	from, commit, date := "", "", ""
+	return "snapshot of " + snapshotField("commit") + ", sent " + snapshotField("date")
+}
+
+// SnapshotHost is the host the snapshot is for ("" without a snapshot).
+func SnapshotHost() string { return snapshotField("host") }
+
+func snapshotField(key string) string {
 	for _, l := range Lines(ReadTrim(RepoFile(".snapshot"))) {
-		k, v, _ := strings.Cut(l, ": ")
-		switch k {
-		case "from":
-			from = v
-		case "commit":
-			commit = v
-		case "date":
-			date = v
+		if k, v, _ := strings.Cut(l, ": "); k == key {
+			return v
 		}
 	}
-	return "snapshot from " + from + " (" + commit + ", " + date + ")"
+	return ""
 }
 
 // Version is the running nimble's version (set by main).

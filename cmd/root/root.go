@@ -25,11 +25,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// edits lists the commands that change the config repo. A host holds only a snapshot of
-// it, so they are refused there before they write anything. (tool select and service
-// check this themselves: they point to the workstation's --host.)
+// edits lists the commands that change the config repo beyond one host file. A host holds
+// only a snapshot of it, so they are refused there before they write anything. (host set,
+// host edit, tool select and service may change the host's own file there: they check
+// nimble.EditableHost themselves.)
 var edits = map[string]bool{
-	"host create": true, "host set": true, "host edit": true, "host remove": true,
+	"host create": true, "host remove": true,
 	"template create": true, "template set": true, "template edit": true, "template default": true, "template remove": true,
 	"domain create": true, "key enclave": true, "key yubikey": true, "key remove": true,
 	"tool use": true, "tool update": true,

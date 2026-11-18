@@ -94,7 +94,7 @@ func rebaseWithYou(dir string) (err error) {
 			return errors.New("the rebase doesn't finish — sort it out in " + nimble.Tilde(dir) + " (git status)")
 		}
 		if files := conflicted(dir); len(files) > 0 {
-			if err := resolve(dir, files); err != nil {
+			if err := Resolve(dir, files); err != nil {
 				return err
 			}
 			if err := gitRun(dir, nil, append([]string{"add", "-A", "--"}, files...)...); err != nil {
@@ -136,7 +136,7 @@ func stashClash(dir string) error {
 	if err != nil || choice != now {
 		return keep(err)
 	}
-	if err := resolve(dir, clash); err != nil {
+	if err := Resolve(dir, clash); err != nil {
 		return keep(err)
 	}
 	if err := gitRun(dir, nil, "reset", "-q"); err != nil { // resolved: uncommitted again, as before the pull
@@ -148,9 +148,10 @@ func stashClash(dir string) error {
 // editFiles opens files in the editor and returns once they are closed (tests replace it).
 var editFiles = repo.Editor
 
-// resolve has the user resolve files in the editor until they have no conflict markers and
-// the config is valid again — or until the user stops (nimble.ErrCancelled).
-func resolve(dir string, files []string) error {
+// Resolve has the user resolve files (relative to dir) in the editor until they have no
+// conflict markers and the config is valid again — or until the user stops
+// (nimble.ErrCancelled). Pull uses it, and so does reading back a host's changes.
+func Resolve(dir string, files []string) error {
 	paths := make([]string, len(files))
 	for i, f := range files {
 		paths[i] = filepath.Join(dir, f)

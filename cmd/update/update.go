@@ -26,11 +26,13 @@ func NewCmdUpdate() *cobra.Command {
 			unpublished commits go on top), apply it on this machine and bring the tools and
 			a released nimble up to date; on Debian, re-run the hardening too (it syncs keys).
 
-			With hosts (from a workstation): send each managed host its config snapshot — only
-			what it needs, no git history, nothing about other machines — and nimble, then
-			harden and apply there. Hosts need no GitHub access; sudo there is confirmed with
-			your hardware key through the forwarded agent. On a host, nimble update re-applies
-			its snapshot.
+			With hosts (from a workstation): first read back what was changed in a host's own
+			host file there (tool select, service, host set|edit on the host) and merge it into
+			the config repo — a clash opens in the editor — and commit it; then send each
+			managed host its config snapshot — only what it needs, no git history, nothing
+			about other machines — and nimble, then harden and apply there. Hosts need no
+			GitHub access; sudo there is confirmed with your hardware key through the
+			forwarded agent. On a host, nimble update re-applies its snapshot.
 		`),
 		Example: heredoc.Doc(`
 			nimble update              # this machine
@@ -137,7 +139,7 @@ func ToHosts(args []string) error {
 		nimble.Step(nimble.Yellow("note: the hosts get the files as they are here, uncommitted changes included — nimble push commits and publishes them"))
 	}
 	return hosts.Each(list, func(h string) error {
-		if err := nimble.Wait("send its config snapshot", func() error { return remote.SendSnapshot(h) }); err != nil {
+		if err := SendConfig(h); err != nil { // what was changed there comes back first
 			return err
 		}
 		if err := nimble.Wait("send nimble", func() error { return remote.SendBinary(h) }); err != nil {

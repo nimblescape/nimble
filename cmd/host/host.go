@@ -164,6 +164,9 @@ func newSet() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := nimble.EditableHost(name); err != nil {
+				return err
+			}
 			settings := args[min(1, len(args)):]
 			if len(settings) == 0 {
 				s, err := nimble.Arg(nil, 0, "change (key=value; keys: address, user, domain, mode, template, tools, shell)", nil)
@@ -197,7 +200,11 @@ func newSet() *cobra.Command {
 			if err := nimble.Record("hosts: "+name+" "+strings.Join(settings, " "), "hosts"); err != nil {
 				return err
 			}
-			nimble.Step("apply it: nimble update " + name)
+			if self, ok := hosts.Self(""); ok && self.Name == name {
+				nimble.Step("apply it: nimble update")
+			} else {
+				nimble.Step("apply it: nimble update " + name)
+			}
 			return nil
 		},
 	}
@@ -212,6 +219,9 @@ func newEdit() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := nimble.Arg(args, 0, "host", hostNames())
 			if err != nil {
+				return err
+			}
+			if err := nimble.EditableHost(name); err != nil {
 				return err
 			}
 			if err := repo.Editor(config.HostFile(name)); err != nil {

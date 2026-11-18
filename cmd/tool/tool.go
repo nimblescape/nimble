@@ -73,8 +73,11 @@ var onHost string
 // target is the host file to change: --host, else this machine's. remote is true when
 // that host is another machine (the change is applied there with nimble update).
 func target() (h config.Host, remote bool, err error) {
-	if onHost == "" || onHost == hosts.MachineName() {
+	if me, ok := hosts.Self(""); onHost == "" || onHost == hosts.MachineName() || (ok && me.Name == onHost) {
 		h, err = self()
+		return h, false, err
+	}
+	if err := nimble.EditableHost(onHost); err != nil { // on a host: only its own
 		return h, false, err
 	}
 	h, ok := config.FindHost(onHost)
@@ -165,7 +168,9 @@ func newSelect() *cobra.Command {
 			its host file (tools:), so they come back on every update. Unchecked tools of the
 			host file are taken out and uninstalled — nimble first warns what gets uninstalled
 			(and what it only stops managing) and asks. The template's tools stay: they change
-			with the template. Without a terminal: nimble host set <host> tools=a,b,c.
+			with the template. Without a terminal: nimble host set <host> tools=a,b,c. On a
+			host it changes the host's own file; the workstation's next nimble update <host>
+			takes the change into the config repo.
 		`),
 		Example: "  nimble tool select                  # this machine\n  nimble tool select --host devbox    # devbox, from the workstation",
 		Args:    cobra.NoArgs,
@@ -174,8 +179,12 @@ func newSelect() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !remote && nimble.IsSnapshot() {
-				return errors.New("this host gets its config from the workstation — there: nimble tool select --host " + h.Name)
+			if remote && nimble.Interactive() {
+				// first take in what was changed on the host since its last snapshot
+				if err := update.ReadBack(h.Name); err != nil {
+					return err
+				}
+				h, _ = config.FindHost(h.Name)
 			}
 			return selectTools(h, remote)
 		},
