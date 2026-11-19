@@ -10,6 +10,7 @@ import (
 	"github.com/MakeNowJust/heredoc"
 	"github.com/nimblescape/nimble/pkg/config"
 	"github.com/nimblescape/nimble/pkg/hosts"
+	"github.com/nimblescape/nimble/pkg/keys"
 	"github.com/nimblescape/nimble/pkg/nimble"
 	"github.com/nimblescape/nimble/pkg/services"
 	"github.com/nimblescape/nimble/pkg/setup"
@@ -19,11 +20,11 @@ import (
 func NewCmdStatus() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status [host…|all]",
-		Short: "What this machine's template asks for vs. what is installed",
+		Short: "What this machine's host file asks for vs. what is installed",
 		Long: heredoc.Doc(`
-			Show this machine's host file and template, its login shell, the repo state and,
-			for every tool of the template, whether it is installed at the pinned version.
-			With hosts, run the same on each of them.
+			Show this machine's host file (without one: the default template), its login
+			shell, the repo state and, for every tool it lists, whether it is installed at the
+			pinned version. With hosts, run the same on each of them.
 		`),
 		Example:           "  nimble status\n  nimble status all",
 		ValidArgsFunction: hosts.Complete,
@@ -59,11 +60,13 @@ func local() error {
 	nimble.Header("This machine")
 	nimble.Info("system", fmt.Sprintf("%s %s, %s@%s", runtime.GOOS, runtime.GOARCH, nimble.CurrentUser(), strings.Split(host, ".")[0]))
 	nimble.Info("host file", hostFile)
-	tmpl := res.Template
-	if tmpl == "" {
-		tmpl = "none"
+	if !found { // with a host file, its tools and shell are its own
+		tmpl := res.Template
+		if tmpl == "" {
+			tmpl = "none"
+		}
+		nimble.Info("template", tmpl)
 	}
-	nimble.Info("template", tmpl)
 	if nimble.IsSnapshot() {
 		nimble.Info("config", nimble.Tilde(nimble.Repo())+" — "+nimble.SnapshotInfo())
 		if changed, _ := nimble.HostChanges(); changed {
@@ -71,6 +74,9 @@ func local() error {
 		}
 	} else {
 		nimble.Info("config repo", nimble.Tilde(nimble.Repo())+" — "+repoState())
+	}
+	for _, h := range keys.Handovers() { // key renewals in progress on this workstation
+		r.Note("handover "+h.Key, h.Describe(c))
 	}
 	shell := nimble.LoginShell()
 	switch want := res.Shell; {
@@ -81,10 +87,10 @@ func local() error {
 	case want == "bash" && strings.HasSuffix(shell, "/bash"):
 		r.OK("login shell", shell)
 	default:
-		r.Bad("login shell", shell+" (template wants "+want+") — nimble apply")
+		r.Bad("login shell", shell+" ("+want+" wanted) — nimble apply")
 	}
 
-	nimble.Header("Tools (from the template and host file)")
+	nimble.Header("Tools")
 	if len(res.Tools) == 0 {
 		nimble.Info("", "none — nothing is installed by nimble on this machine")
 	}

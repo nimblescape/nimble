@@ -29,7 +29,7 @@ nimble push                           # publish the changes
 nimble update                         # pull the config, apply it here, bring tools up to date
 nimble update all                     # the same on every managed host
 nimble tool select --host devbox      # pick a host's tools: check to install, uncheck to uninstall
-nimble tool shell bash                # this machine's login shell: zsh, bash or the template's
+nimble tool shell bash                # this machine's login shell: zsh, bash or the system's
 nimble tool use go                    # pick a Go version from its releases and pin it
 nimble tool list                      # the catalog, and updates of the pinned languages
 nimble service add claude owner/app --host devbox   # a Claude Code server for a repo
@@ -49,14 +49,14 @@ Commands that change the config check it and commit it (`tool use` and `tool upd
 | `status`, `doctor [host…\|all]` | Wanted vs. installed (tools, and on a host its services: enabled, running); a health check of shell, links, keys, ssh config and hardening |
 | `push [-m msg] [--diff]` | Check the YAML, pull, show what goes out (`--diff`: the full diff) and ask, push |
 | `changes [--diff]` | What has changed and isn't published yet: what the next `push` publishes (on a host: what changed in its host file there) |
-| `host create\|set\|edit\|list\|show\|remove` | The machines, one YAML file each; `show` prints one merged with its template and the defaults |
-| `template create\|set\|edit\|list\|show\|default\|remove` | Which tools and login shell a machine gets |
+| `host create\|set\|edit\|list\|show\|remove` | The machines, one YAML file each; `create` (and `set <host> template=<name>`) copies a template's tools and shell in; `show` prints one with the defaults |
+| `template create\|set\|edit\|list\|show\|default\|remove` | Starting points for a host's tools and login shell — copied, never referenced |
 | `tool list`, `tool select [--host h]` | The tool catalog and updates of the pinned versions; pick a machine's tools (check to install, uncheck to uninstall), here or on a host from the workstation |
-| `tool shell [zsh\|bash\|default] [--host h]` | Pick a machine's login shell (`default`: the template's) and apply it, here or on a host from the workstation |
+| `tool shell [zsh\|bash\|default] [--host h]` | Pick a machine's login shell (`default`: the system's) and apply it, here or on a host from the workstation |
 | `tool use [language] [version]` | Pin Node, Go, Rust or Python to a version picked from its releases |
 | `tool update [name…]` | Write bugfix updates of the pinned languages (feature updates on request) |
 | `service list\|add\|enable\|disable\|remove [--host h]` | A Claude Code server per repo on a host |
-| `key list\|enclave\|yubikey\|remove` | Daily keys (create, renew) and YubiKey backups (set up, register) |
+| `key list\|enclave\|yubikey\|remove` | Daily keys (create, renew) and YubiKey backups (set up, register, renew); a renewal hands over: the new key is primary at once, the old one opens the hosts not updated yet until every host has the new one (`--handover`, default 14 days) |
 | `domain list\|create` | Administration domains: which keys a group of hosts trusts |
 | `version`, `upgrade`, `path`, `edit` | nimble itself and the config repo |
 
@@ -65,8 +65,8 @@ Commands that change the config check it and commit it (`tool use` and `tool upd
 | Path | Holds |
 |---|---|
 | `nimble.yaml` | The default template, the domains (the first is the default), shared links |
-| `hosts/<name>.yaml` | One machine: address, admin user, domain, mode, template, extra tools, shell, services, hardening level |
-| `templates/<name>.yaml` | Which tools and login shell a machine gets; `base` installs nothing |
+| `hosts/<name>.yaml` | One machine: address, admin user, domain, mode, tools, shell, services, hardening level |
+| `templates/<name>.yaml` | Tools and login shell that `host create` copies into a new host file; `base` installs nothing |
 | `keys/` | The public keys of the hardware keys in use |
 | `toolchain/pins.yaml` | The pinned languages, and the npm, Go and uv tools to install |
 | `shell/` | Shared shell files for bash and zsh, and the starship prompt |

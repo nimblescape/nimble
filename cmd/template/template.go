@@ -17,12 +17,14 @@ import (
 func NewCmdTemplate() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "template <command>",
-		Short: "Manage the templates: which tools and shell a machine gets (templates/*.yaml)",
+		Short: "Manage the templates: starting points for a host's tools and shell (templates/*.yaml)",
 		Long: heredoc.Doc(`
 			A template is a YAML file in templates/: description, os (macos, debian or both),
-			shell (zsh, bash or the system default) and the tools from the catalog. A machine
-			uses its host file's template, else the default one from nimble.yaml; nothing is
-			installed that no template lists.
+			shell (zsh, bash or the system default) and the tools from the catalog. It is
+			copied, never referenced: host create (and host set <host> template=<name>) write
+			its tools and shell into the host file, which holds them from then on, so changing
+			or removing a template changes no machine. The default template is what host create
+			offers, and what a machine without a host file gets.
 		`),
 	}
 	cmd.AddCommand(newList(), newShow(), newCreate(), newSet(), newEdit(), newDefault(), newRemove())
@@ -92,9 +94,6 @@ func newList() *cobra.Command {
 				fmt.Printf("%s %-14s %-7s shell %-8s %s\n", mark, t.Name, os, shell, strings.Join(t.Tools, ","))
 				if t.Description != "" {
 					fmt.Printf("  %s\n", nimble.Bold("")+t.Description)
-				}
-				if users := config.TemplateUsers(c, t.Name); len(users) > 0 {
-					fmt.Printf("  used by: %s\n", strings.Join(users, ", "))
 				}
 			}
 			fmt.Println("\n* = default template (nimble template default <name>)")
@@ -231,7 +230,7 @@ func newSet() *cobra.Command {
 			if err := nimble.Record("templates: "+name+" "+strings.Join(settings, " "), "templates"); err != nil {
 				return err
 			}
-			nimble.Step("machines using it change on their next update: nimble update all")
+			nimble.Step("hosts made from it keep their copy — to copy it in again: nimble host set <host> template=" + name)
 			return nil
 		},
 	}
@@ -255,7 +254,7 @@ func newEdit() *cobra.Command {
 			if err := nimble.Record("templates: edit "+name, "templates"); err != nil {
 				return err
 			}
-			nimble.Step("machines using it change on their next update: nimble update all")
+			nimble.Step("hosts made from it keep their copy — to copy it in again: nimble host set <host> template=" + name)
 			return nil
 		},
 	}
@@ -263,7 +262,7 @@ func newEdit() *cobra.Command {
 
 func newDefault() *cobra.Command {
 	return &cobra.Command{
-		Use: "default <name>", Short: "Make a template the default (machines without their own)", Args: cobra.MaximumNArgs(1),
+		Use: "default <name>", Short: "Make a template the default (what host create offers, and machines without a host file get)", Args: cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeTemplates,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := nimble.Arg(args, 0, "template", templateNames())
@@ -281,7 +280,7 @@ func newDefault() *cobra.Command {
 
 func newRemove() *cobra.Command {
 	return &cobra.Command{
-		Use: "remove <name>", Short: "Remove a template no machine uses", Args: cobra.MaximumNArgs(1),
+		Use: "remove <name>", Short: "Remove a template (hosts made from it keep their copy)", Args: cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeTemplates,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := nimble.Arg(args, 0, "template", templateNames())
@@ -294,9 +293,6 @@ func newRemove() *cobra.Command {
 			}
 			if name == c.DefaultTemplate {
 				return errors.New(name + " is the default template — make another one the default first")
-			}
-			if users := config.TemplateUsers(c, name); len(users) > 0 {
-				return errors.New(name + " is used by: " + strings.Join(users, ", "))
 			}
 			if err := os.Remove(config.TemplateFile(name)); err != nil {
 				return fmt.Errorf("no template %s", name)

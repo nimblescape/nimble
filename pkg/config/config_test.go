@@ -19,9 +19,9 @@ func repo(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	write("nimble.yaml", "defaultTemplate: dev\ndomains:\n  nimblescape:\n    label: ssh\n  school:\n    label: htl\nlinks: []\n")
+	write("nimble.yaml", "format: 2\ndefaultTemplate: dev\ndomains:\n  nimblescape:\n    label: ssh\n  school:\n    label: htl\nlinks: []\n")
 	write("templates/dev.yaml", "description: dev host\nos: debian\nshell: zsh\ntools:\n  - starship\n  - go\n")
-	write("hosts/swan.yaml", "# swan, the build host\naddress: swan.example.com # public name\nuser: debian\ntemplate: dev\ntools: [docker]\n")
+	write("hosts/swan.yaml", "# swan, the build host\naddress: swan.example.com # public name\nuser: debian\ntools: [starship, go, docker]\nshell: zsh\n")
 	write("hosts/vm.yaml", "address: vm.example.com\nuser: hannes\ndomain: school\nmode: ssh\n")
 	write("toolchain/pins.yaml", "# pins\nnode: 26.8.1\ngo: 1.27.2 # go\npython: 3.12.15\nrust: 1.100.0\n")
 	return dir
@@ -40,12 +40,69 @@ func TestLoadAndResolve(t *testing.T) {
 	if !ok || h.Address != "swan.example.com" || !h.Managed() {
 		t.Fatalf("swan: %+v", h)
 	}
+	// a host file holds its tools and shell itself
 	r, err := Resolve(c, &h)
+	if err != nil || r.Template != "" || r.Shell != "zsh" || strings.Join(r.Tools, ",") != "starship,go,docker" {
+		t.Fatalf("resolved %+v %v", r, err)
+	}
+	// a machine without a host file gets the default template — if it's for this system
+	r, err = Resolve(c, nil)
 	if err != nil && !strings.Contains(err.Error(), "is for debian") { // the test may run on macOS
 		t.Fatal(err)
 	}
-	if err == nil && (r.Shell != "zsh" || strings.Join(r.Tools, ",") != "starship,go,docker") {
-		t.Fatalf("resolved %+v", r)
+	if err == nil && (r.Template != "dev" || r.Shell != "zsh" || strings.Join(r.Tools, ",") != "starship,go") {
+		t.Fatalf("resolved without a host file %+v", r)
+	}
+}
+
+func TestMigrateHosts(t *testing.T) {
+	dir := repo(t)
+	write := func(rel, body string) { os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644) }
+	read := func(rel string) string { b, _ := os.ReadFile(filepath.Join(dir, rel)); return string(b) }
+	// a repo from before format 2: hosts name their template, or get the default one
+	write("nimble.yaml", "# config\ndefaultTemplate: dev\ndomains:\n  nimblescape:\n    label: ssh\n  school:\n    label: htl\nlinks: []\n")
+	write("templates/mac.yaml", "os: macos\ntools: [gh]\n")
+	write("hosts/swan.yaml", "# swan, the build host\naddress: swan.example.com # public name\ntemplate: dev # the dev setup\ntools: [docker, go]\nharden: sudo\n")
+	write("hosts/plain.yaml", "address: plain.example.com\n")
+	write("hosts/mac.yaml", "mode: workstation\ntemplate: mac\nshell: bash\n")
+	write("hosts/vm.yaml", "address: vm.example.com\nmode: ssh\ntemplate: dev\n")
+
+	changed, migrated, err := MigrateHosts()
+	if err != nil || !migrated || strings.Join(changed, ",") != "mac,plain,swan,vm" {
+		t.Fatalf("changed %v migrated %v err %v", changed, migrated, err)
+	}
+	// the template's tools first, then the host's own; the host's shell wins; comments stay
+	swan := read("hosts/swan.yaml")
+	// tools: is changed in place, shell: takes the template: line's place
+	for _, want := range []string{"# swan, the build host", "# public name\nshell: zsh\ntools:\n  - starship\n  - go\n  - docker\nharden: sudo"} {
+		if !strings.Contains(swan, want) {
+			t.Errorf("swan: missing %q in:\n%s", want, swan)
+		}
+	}
+	for name, want := range map[string]Host{
+		"swan":  {Tools: []string{"starship", "go", "docker"}, Shell: "zsh"},
+		"plain": {Tools: []string{"starship", "go"}, Shell: "zsh"}, // the default template
+		"mac":   {Tools: []string{"gh"}, Shell: "bash"},
+		"vm":    {}, // ssh only: the reference just goes
+	} {
+		h, _ := FindHost(name)
+		if h.Template != "" || strings.Join(h.Tools, ",") != strings.Join(want.Tools, ",") || h.Shell != want.Shell {
+			t.Errorf("%s: %+v", name, h)
+		}
+	}
+	if c, _ := Load(); c.Format != 2 || !strings.HasPrefix(read("nimble.yaml"), "# config\n") {
+		t.Errorf("nimble.yaml:\n%s", read("nimble.yaml"))
+	}
+	if errs := Validate([]string{"starship", "go", "docker", "gh"}); len(errs) > 0 {
+		t.Errorf("migrated repo invalid: %v", errs)
+	}
+	// once: a host file without tools now means none, not the default template's
+	write("hosts/plain.yaml", "address: plain.example.com\n")
+	if changed, migrated, err := MigrateHosts(); migrated || len(changed) > 0 || err != nil {
+		t.Fatalf("second run: %v %v %v", changed, migrated, err)
+	}
+	if h, _ := FindHost("plain"); len(h.Tools) > 0 {
+		t.Errorf("plain got tools again: %+v", h)
 	}
 }
 
@@ -65,7 +122,7 @@ func TestStrictAndValidate(t *testing.T) {
 	for _, e := range errs {
 		joined += e.Error() + "\n"
 	}
-	for _, want := range []string{`template "nope"`, `unknown tool "warp"`, `mode "weird"`} {
+	for _, want := range []string{`template: nope — a host file holds its tools and shell itself`, `unknown tool "warp"`, `mode "weird"`} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in:\n%s", want, joined)
 		}
@@ -74,18 +131,31 @@ func TestStrictAndValidate(t *testing.T) {
 
 func TestEditsKeepComments(t *testing.T) {
 	dir := repo(t)
-	if err := SetHost("swan", "template", "workstation"); err != nil {
+	if err := SetHost("swan", "tools", "docker,gh"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetHost("swan", "tools", "docker,gh"); err != nil {
+	if err := SetHost("swan", "shell", ""); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "hosts/swan.yaml"))
 	s := string(b)
-	for _, want := range []string{"# swan, the build host", "# public name", "template: workstation", "- gh"} {
+	for _, want := range []string{"# swan, the build host", "# public name", "- gh"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q in:\n%s", want, s)
 		}
+	}
+	// template= copies the template's tools and shell over the host's; no reference stays
+	if err := SetHost("swan", "template", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := FindHost("swan"); h.Template != "" || strings.Join(h.Tools, ",") != "starship,go" || h.Shell != "zsh" {
+		t.Fatalf("after template=dev: %+v", h)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "hosts/swan.yaml")); !strings.Contains(string(b), "# public name") {
+		t.Errorf("comment lost:\n%s", b)
+	}
+	if err := SetHost("vm", "template", "dev"); err == nil || !strings.Contains(err.Error(), "ssh only") {
+		t.Errorf("template on an ssh-only host: %v", err)
 	}
 	if err := SetHostServices("swan", []Service{{Service: "claude", Repo: "a/b", State: "enabled"}}); err != nil {
 		t.Fatal(err)

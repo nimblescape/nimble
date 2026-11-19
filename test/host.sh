@@ -28,9 +28,9 @@ mkdir -p "$snap"/{hosts,templates,toolchain,keys/yubikey}
 cp -R pkg/skeleton/files/shell "$snap/shell"
 cp pkg/skeleton/files/toolchain/pins.yaml "$snap/toolchain/"
 cp "$work/key.pub" "$snap/keys/yubikey/test.pub"
-printf 'address: devbox.example.com\nuser: debian\ntemplate: plain\nservices:\n  - service: claude\n    repo: owner/app\n    state: enabled\n' >"$snap/hosts/devbox.yaml"
+printf 'address: devbox.example.com\nuser: debian\ntools: []\nservices:\n  - service: claude\n    repo: owner/app\n    state: enabled\n' >"$snap/hosts/devbox.yaml"
 printf 'description: no tools\ntools: []\n' >"$snap/templates/plain.yaml"
-printf 'defaultTemplate: plain\ndomains:\n  main:\n    label: ssh\nlinks: []\n' >"$snap/nimble.yaml"
+printf 'format: 2\ndefaultTemplate: plain\ndomains:\n  main:\n    label: ssh\nlinks: []\n' >"$snap/nimble.yaml"
 printf 'host: devbox\ncommit: test\ndate: 2026-01-01T00:00:00Z\n' >"$snap/.snapshot"
 mkdir -p "$snap/.sent/hosts" && cp "$snap/hosts/devbox.yaml" "$snap/.sent/hosts/"
 

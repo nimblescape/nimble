@@ -138,6 +138,7 @@ func ToHosts(args []string) error {
 	if len(nimble.Lines(nimble.Git("status", "--porcelain"))) > 0 {
 		nimble.Step(nimble.Yellow("note: the hosts get the files as they are here, uncommitted changes included — nimble push commits and publishes them"))
 	}
+	defer FinishHandovers()
 	return hosts.Each(list, func(h string) error {
 		if err := SendConfig(h); err != nil { // what was changed there comes back first
 			return err
@@ -149,8 +150,12 @@ func ToHosts(args []string) error {
 		// the keys from being synced. The update fails if any of them failed.
 		nimble.Step("harden (syncs the keys), apply, services")
 		n := `"$HOME/.local/bin/nimble"`
-		return hosts.Run(h, hosts.Opts{Agent: true},
+		if err := hosts.Run(h, hosts.Opts{Agent: true},
 			`sudo `+n+` harden --as `+h+`; r1=$?; `+n+` apply --upgrade --as `+h+`; r2=$?; sudo `+n+` service sync --as `+h+
-				`; r3=$?; [ "$r1$r2$r3" = 000 ]`)
+				`; r3=$?; [ "$r1$r2$r3" = 000 ]`); err != nil {
+			return err // not noted for a key handover: the keys may not have been synced
+		}
+		KeysSynced(h)
+		return nil
 	})
 }

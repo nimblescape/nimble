@@ -39,10 +39,6 @@ func Snapshot(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tmpl := h.Template
-	if tmpl == "" {
-		tmpl = c.DefaultTemplate
-	}
 	dir, err := os.MkdirTemp("", "nimble-snapshot-"+name)
 	if err != nil {
 		return "", err
@@ -52,10 +48,8 @@ func Snapshot(name string) (string, error) {
 		return copyPath(filepath.Join(repo, rel), filepath.Join(dir, rel))
 	}
 
+	// no templates: the host file holds its tools and shell itself
 	files := []string{"hosts/" + name + ".yaml", "toolchain/pins.yaml", "shell"}
-	if tmpl != "" {
-		files = append(files, "templates/"+tmpl+".yaml")
-	}
 	if nimble.Exists(filepath.Join(repo, "personal", "shell")) {
 		files = append(files, "personal/shell")
 	}
@@ -97,7 +91,7 @@ func Snapshot(name string) (string, error) {
 		head += " + uncommitted changes"
 	}
 	note := fmt.Sprintf("# Snapshot of the config for %s (%s) — don't edit: the workstation's\n# nimble update %s replaces it.\n", name, head, name)
-	conf := map[string]any{"defaultTemplate": tmpl, "domains": map[string]any{d.Name: map[string]string{"label": d.Label}}, "links": linkList(shared)}
+	conf := map[string]any{"format": 2, "defaultTemplate": "", "domains": map[string]any{d.Name: map[string]string{"label": d.Label}}, "links": linkList(shared)}
 	if err := writeYAMLFile(filepath.Join(dir, "nimble.yaml"), note, conf); err != nil {
 		os.RemoveAll(dir)
 		return "", err

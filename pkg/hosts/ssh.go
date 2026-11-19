@@ -39,19 +39,22 @@ func UseYubiKey() error {
 		nimble.Pause("No YubiKey found — plug in a registered backup")
 	}
 	nimble.Step("YubiKey: enter its PIN (and touch it when it blinks)")
-	handle, err := keys.BackupHandle(keygen, dir)
+	handles, err := keys.BackupHandles(keygen, dir)
 	if err != nil {
 		return err
 	}
-	if handle == "" {
+	if len(handles) == 0 {
 		return errors.New("this YubiKey carries no nimble key — register it first: nimble key yubikey")
 	}
-	k, ok := keys.Registered(handle + ".pub")
+	k, ok := keys.Registered(handles[0] + ".pub") // the registered one comes first
 	if !ok {
 		return errors.New("this YubiKey's key isn't in keys/yubikey/, so no host trusts it — nimble key yubikey registers it")
 	}
 	backup.ssh = ssh
-	backup.opts = []string{"-o", "IdentitiesOnly=yes", "-o", "IdentityFile=" + handle, "-o", "SecurityKeyProvider=internal"}
+	backup.opts = []string{"-o", "IdentitiesOnly=yes", "-o", "SecurityKeyProvider=internal"}
+	for _, h := range handles { // during a handover the old credential too: hosts not updated yet trust only that one
+		backup.opts = append(backup.opts, "-o", "IdentityFile="+h)
+	}
 	nimble.Step("using the YubiKey " + k.Name + ": ssh asks for its PIN and a touch for each host; sudo there asks for the admin's password")
 	return nil
 }

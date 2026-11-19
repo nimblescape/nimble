@@ -10,6 +10,8 @@ package keys
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -173,6 +175,27 @@ func Fingerprint(pubLine string) string {
 	}
 	sum := sha256.Sum256(blob)
 	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+}
+
+// DropOldEnclave removes the key a renewal kept on this Mac: the Secure Enclave key behind
+// handle.old, and that handle. Hosts that don't trust the new key yet can then only be
+// reached with a YubiKey.
+func DropOldEnclave(handle string) error {
+	old := handle + ".old"
+	if e, ok := DailyKey(old); ok {
+		if cur, ok := DailyKey(handle); ok && cur.Hash == e.Hash {
+			return errors.New("the old handle points at the key in use — not removing it")
+		}
+		if err := nimble.Run("sc_auth", "delete-ctk-identity", "-h", e.Hash); err != nil {
+			return err
+		}
+	}
+	for _, suffix := range []string{"", ".pub"} {
+		if err := os.Remove(old + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // DailyKey is the Secure Enclave key behind a key handle file (~/.ssh/id_ecdsa_sk_rk_<label>,

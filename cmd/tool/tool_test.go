@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nimblescape/nimble/pkg/config"
 	"github.com/nimblescape/nimble/pkg/setup"
 )
 
@@ -15,37 +14,33 @@ func TestAddChoices(t *testing.T) {
 		{Name: "docker", Desc: "Docker"},
 		{Name: "iterm2", Desc: "iTerm2", OS: "macos"},
 	}
-	r := config.Resolved{Template: "dev", TemplateTools: []string{"starship"}}
-	has := toolSources(r, config.Host{Tools: []string{"gh", "starship"}})
-	if has["starship"] != "template dev" || has["gh"] != "host file" || has["docker"] != "" {
-		t.Fatalf("sources %v", has)
-	}
+	has := []string{"gh", "starship"} // the host file's tools
 
 	labels, checked, names := addChoices(catalog, has)
 	if len(labels) != 4 || len(checked) != 2 {
 		t.Fatalf("labels %q checked %q", labels, checked)
 	}
-	if checked[0] != "starship  the prompt (template)" { // the short label, not the long Desc
+	if checked[0] != "starship  the prompt" { // the short label, not the long Desc; catalog order
 		t.Errorf("checked[0] %q", checked[0])
 	}
-	if checked[1] != "gh        GitHub CLI (host file)" || labels[2] != "docker    Docker" {
+	if checked[1] != "gh        GitHub CLI" || labels[2] != "docker    Docker" {
 		t.Errorf("labels %q", labels)
 	}
 
-	// docker newly checked, gh (host file) unchecked: docker is added, gh removed
-	add, drop, kept := picked(catalog, []string{checked[0], labels[2]}, names, has)
-	if strings.Join(add, ",") != "docker" || strings.Join(drop, ",") != "gh" || len(kept) != 0 {
-		t.Errorf("add %v drop %v kept %v", add, drop, kept)
+	// docker newly checked, gh unchecked: docker is added, gh removed
+	add, drop := picked(catalog, []string{checked[0], labels[2]}, names, has)
+	if strings.Join(add, ",") != "docker" || strings.Join(drop, ",") != "gh" {
+		t.Errorf("add %v drop %v", add, drop)
 	}
-	// everything unchecked: gh removed, starship (template) stays
-	add, drop, kept = picked(catalog, nil, names, has)
-	if len(add) != 0 || strings.Join(drop, ",") != "gh" || strings.Join(kept, ",") != "starship" {
-		t.Errorf("add %v drop %v kept %v", add, drop, kept)
+	// everything unchecked: everything the host file has is removed
+	add, drop = picked(catalog, nil, names, has)
+	if len(add) != 0 || strings.Join(drop, ",") != "starship,gh" {
+		t.Errorf("add %v drop %v", add, drop)
 	}
 	// nothing touched: nothing changes
-	add, drop, kept = picked(catalog, checked, names, has)
-	if len(add)+len(drop)+len(kept) != 0 {
-		t.Errorf("add %v drop %v kept %v", add, drop, kept)
+	add, drop = picked(catalog, checked, names, has)
+	if len(add)+len(drop) != 0 {
+		t.Errorf("add %v drop %v", add, drop)
 	}
 }
 
@@ -66,17 +61,14 @@ func TestCatalogFor(t *testing.T) {
 }
 
 func TestShellChoices(t *testing.T) {
-	if got := defaultShell(config.Resolved{Shell: "zsh"}); got != "the template's: zsh" {
-		t.Errorf("defaultShell %q", got)
-	}
-	labels, sel, names := shellChoices("", defaultShell(config.Resolved{}))
+	labels, sel, names := shellChoices("")
 	if len(labels) != 3 || sel != labels[2] || names[sel] != "default" {
 		t.Fatalf("labels %q selected %q", labels, sel)
 	}
 	if labels[2] != "default  the system's login shell (current)" {
 		t.Errorf("labels[2] %q", labels[2])
 	}
-	labels, sel, names = shellChoices("bash", "the template's: zsh")
+	labels, sel, names = shellChoices("bash")
 	if sel != labels[1] || names[sel] != "bash" || names[labels[0]] != "zsh" || strings.Contains(labels[2], "current") {
 		t.Errorf("labels %q selected %q", labels, sel)
 	}

@@ -39,7 +39,11 @@ func Write(dir, domain, machine string) error {
 	}
 	conf := fmt.Sprintf(`# nimble configuration for this config repo.
 
-# Template for machines whose host file doesn't name one (nimble template default <name>).
+# 2: host files hold their tools and shell themselves; templates are copied in.
+format: 2
+
+# The template host create offers to copy, and what a machine without a host file gets
+# (nimble template default <name>).
 defaultTemplate: base
 
 # Administration domains: who runs the machines. Each has the label of its daily key
