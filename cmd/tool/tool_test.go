@@ -64,3 +64,20 @@ func TestCatalogFor(t *testing.T) {
 		t.Errorf("debian: %s", debian)
 	}
 }
+
+func TestShellChoices(t *testing.T) {
+	if got := defaultShell(config.Resolved{Shell: "zsh"}); got != "the template's: zsh" {
+		t.Errorf("defaultShell %q", got)
+	}
+	labels, sel, names := shellChoices("", defaultShell(config.Resolved{}))
+	if len(labels) != 3 || sel != labels[2] || names[sel] != "default" {
+		t.Fatalf("labels %q selected %q", labels, sel)
+	}
+	if labels[2] != "default  the system's login shell (current)" {
+		t.Errorf("labels[2] %q", labels[2])
+	}
+	labels, sel, names = shellChoices("bash", "the template's: zsh")
+	if sel != labels[1] || names[sel] != "bash" || names[labels[0]] != "zsh" || strings.Contains(labels[2], "current") {
+		t.Errorf("labels %q selected %q", labels, sel)
+	}
+}
