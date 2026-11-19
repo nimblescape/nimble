@@ -1,8 +1,8 @@
 // Package config reads and writes the YAML inventories of the nimble config repo:
 //
 //	nimble.yaml              default template, domains, linked config files
-//	hosts/<name>.yaml        one file per machine (workstations included), with its services
-//	templates/<name>.yaml    which tools a machine gets and its login shell
+//	hosts/<name>.yaml        one file per machine (workstations included): its tools, shell, services
+//	templates/<name>.yaml    starting points: tools and login shell, copied into a host file
 //	toolchain/pins.yaml      pinned versions (see pins.go)
 //
 // Writes go through the parsed YAML tree, so comments in the files survive.
@@ -24,6 +24,7 @@ import (
 
 // Config is nimble.yaml.
 type Config struct {
+	Format          int     `yaml:"format,omitempty"` // 2: host files hold their tools and shell (see MigrateHosts)
 	DefaultTemplate string  `yaml:"defaultTemplate"`
 	Domains         Domains `yaml:"domains"`
 	Links           []Link  `yaml:"links"`
@@ -138,8 +139,8 @@ type Host struct {
 	Address  string    `yaml:"address,omitempty"`
 	User     string    `yaml:"user,omitempty"`
 	Domain   string    `yaml:"domain,omitempty"`
-	Mode     string    `yaml:"mode,omitempty"` // managed (default) | ssh | workstation
-	Template string    `yaml:"template,omitempty"`
+	Mode     string    `yaml:"mode,omitempty"`     // managed (default) | ssh | workstation
+	Template string    `yaml:"template,omitempty"` // only before format 2: MigrateHosts copies it in
 	Tools    []string  `yaml:"tools,omitempty"`
 	Shell    string    `yaml:"shell,omitempty"`
 	Services []Service `yaml:"services,omitempty"`
@@ -236,7 +237,14 @@ func SetHost(name, key, value string) error {
 		return fmt.Errorf("no host %s", name)
 	}
 	switch key {
-	case "address", "user", "domain", "mode", "template", "shell":
+	case "address", "user", "domain", "mode", "shell":
+	case "template": // a copy: the template's tools and shell replace the host's
+		h, _ := FindHost(name)
+		t, err := TemplateFor(value, h)
+		if err != nil {
+			return err
+		}
+		return EditYAML(hostPath(name), func(doc *yaml.Node) error { return copyTemplate(doc, t.Tools, t.Shell) })
 	case "tools":
 		return EditYAML(hostPath(name), func(doc *yaml.Node) error { return setList(doc, "tools", splitList(value)) })
 	default:
@@ -427,8 +435,8 @@ func Validate(tools []string) []error {
 		if _, err := c.Domain(h.Domain); err != nil {
 			bad("%s: %v", f, err)
 		}
-		if h.Template != "" && !templates[h.Template] {
-			bad("%s: template %q doesn't exist", f, h.Template)
+		if h.Template != "" { // templates are copied into the host file, not named
+			bad("%s: template: %s — a host file holds its tools and shell itself: nimble host set %s template=%s copies them in", f, h.Template, h.Name, h.Template)
 		}
 		if h.Shell != "" && h.Shell != "zsh" && h.Shell != "bash" {
 			bad("%s: shell %q (zsh or bash)", f, h.Shell)
@@ -481,65 +489,135 @@ func validatePins() []error {
 	return errs
 }
 
-// Resolved is what applies to a machine: its template plus its own additions.
+// Resolved is what applies to a machine: its host file's tools and shell — or, on a
+// machine without a host file, the default template's.
 type Resolved struct {
-	Template      string   // "" = none
-	TemplateOS    string   // the template's os: "" (both), macos, debian
-	TemplateTools []string // the template's own tools
-	Tools         []string // the template's tools plus the host's extras
-	Shell         string   // "" = the system default
+	Template string   // the default template a machine without a host file gets ("" otherwise)
+	Tools    []string // nil = none
+	Shell    string   // "" = the system default
 }
 
-// Resolve combines this machine's template (or the default template) with its own
-// settings, and checks that the template is for this machine's OS. A machine without a
-// host file gets the default template.
+// Resolve is what applies to a machine. A host file is complete in itself: templates were
+// copied into it when it was made (host create, host set template=). A machine without a
+// host file gets the default template, which must be for this machine's system.
 func Resolve(c *Config, h *Host) (Resolved, error) {
-	r, err := Merge(c, h)
-	if err == nil && r.TemplateOS != "" && OS() != "" && r.TemplateOS != OS() {
-		err = fmt.Errorf("template %s is for %s, this is %s", r.Template, r.TemplateOS, OS())
-	}
-	return r, err
-}
-
-// Merge combines a host's template (or the default template) with its own settings, for
-// any host: it doesn't check the template's OS against this machine (Resolve does).
-func Merge(c *Config, h *Host) (Resolved, error) {
-	var r Resolved
-	name := c.DefaultTemplate
-	if h != nil && h.Template != "" {
-		name = h.Template
-	}
-	if name != "" {
-		t, err := FindTemplate(name)
-		if err != nil {
-			return r, err
-		}
-		r.Template, r.TemplateOS, r.TemplateTools = name, t.OS, t.Tools
-		r.Tools, r.Shell = append(r.Tools, t.Tools...), t.Shell
-	}
 	if h != nil {
-		r.Tools = appendUnique(r.Tools, h.Tools...)
-		if h.Shell != "" {
-			r.Shell = h.Shell
-		}
+		return Resolved{Tools: h.Tools, Shell: h.Shell}, nil
 	}
-	return r, nil
+	if c.DefaultTemplate == "" {
+		return Resolved{}, nil
+	}
+	t, err := FindTemplate(c.DefaultTemplate)
+	if err != nil {
+		return Resolved{}, err
+	}
+	if t.OS != "" && OS() != "" && t.OS != OS() {
+		return Resolved{}, fmt.Errorf("template %s is for %s, this is %s", t.Name, t.OS, OS())
+	}
+	return Resolved{Template: t.Name, Tools: t.Tools, Shell: t.Shell}, nil
 }
 
-// TemplateUsers lists the hosts that use a template (directly, or as the default).
-func TemplateUsers(c *Config, name string) []string {
-	hosts, _ := Hosts()
-	var out []string
-	for _, h := range hosts {
-		t := h.Template
-		if t == "" && h.Managed() || t == "" && h.Workstation() {
-			t = c.DefaultTemplate
+// TemplateFor reads the template to copy into host h, checked against what h is: a
+// managed host runs Debian, and nimble installs nothing on a host reached over ssh only.
+func TemplateFor(name string, h Host) (Template, error) {
+	if !h.Managed() && !h.Workstation() {
+		return Template{}, fmt.Errorf("%s is reached over ssh only (mode %s): nimble installs nothing there, so it takes no template", h.Name, h.Mode)
+	}
+	t, err := FindTemplate(name)
+	if err != nil {
+		return t, err
+	}
+	if h.Managed() && t.OS == "macos" {
+		return t, fmt.Errorf("template %s is for macos; %s is a managed Debian host", name, h.Name)
+	}
+	return t, nil
+}
+
+// copyTemplate writes tools and shell into a host file's tree: in place where the file has
+// them, else where its template: line was (or at the end). An empty value removes the key;
+// the template: line goes.
+func copyTemplate(doc *yaml.Node, tools []string, shell string) error {
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return errors.New("expected a mapping at the top of the file")
+	}
+	seq := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, t := range tools {
+		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: t})
+	}
+	vals := []struct {
+		key   string
+		node  *yaml.Node
+		empty bool
+	}{{"tools", seq, len(tools) == 0}, {"shell", &yaml.Node{Kind: yaml.ScalarNode, Value: shell}, shell == ""}}
+	var missing []*yaml.Node
+	for _, v := range vals {
+		if mapValue(root, v.key) != nil || v.empty {
+			if err := setNode(doc, v.key, v.node, v.empty); err != nil { // in place, or removed
+				return err
+			}
+			continue
 		}
-		if t == name {
-			out = append(out, h.Name)
+		missing = append(missing, &yaml.Node{Kind: yaml.ScalarNode, Value: v.key}, v.node)
+	}
+	at := len(root.Content)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "template" {
+			at = i
+			root.Content = append(root.Content[:i], root.Content[i+2:]...)
+			break
 		}
 	}
-	return out
+	root.Content = append(root.Content[:at], append(missing, root.Content[at:]...)...)
+	return nil
+}
+
+// Format 2: host files hold their tools and shell themselves (templates are copied in);
+// before, a host file named its template — or, without one, got the default template.
+const currentFormat = 2
+
+// MigrateHosts copies the templates into the host files once, when nimble.yaml is older
+// than format 2: a managed host's or workstation's tools become its template's (or the
+// default template's) followed by its own, its shell its own else the template's; the
+// template: line goes. Then nimble.yaml gets format: 2. It returns the hosts it changed,
+// and whether it migrated at all.
+func MigrateHosts() (changed []string, migrated bool, err error) {
+	c, err := Load()
+	if err != nil || c.Format >= currentFormat {
+		return nil, false, err
+	}
+	hs, err := Hosts()
+	if err != nil {
+		return nil, false, err
+	}
+	for _, h := range hs {
+		name := h.Template
+		if name == "" && (h.Managed() || h.Workstation()) {
+			name = c.DefaultTemplate
+		}
+		if name == "" {
+			continue
+		}
+		tools, shell := h.Tools, h.Shell
+		if h.Managed() || h.Workstation() {
+			t, err := FindTemplate(name)
+			if err != nil {
+				return nil, false, fmt.Errorf("hosts/%s.yaml: %w", h.Name, err)
+			}
+			tools = appendUnique(append([]string{}, t.Tools...), h.Tools...)
+			if shell == "" {
+				shell = t.Shell
+			}
+		}
+		if err := EditYAML(hostPath(h.Name), func(doc *yaml.Node) error { return copyTemplate(doc, tools, shell) }); err != nil {
+			return nil, false, err
+		}
+		changed = append(changed, h.Name)
+	}
+	err = EditYAML(nimble.RepoFile("nimble.yaml"), func(doc *yaml.Node) error {
+		return setScalar(doc, "format", fmt.Sprint(currentFormat))
+	})
+	return changed, true, err
 }
 
 func appendUnique(list []string, more ...string) []string {

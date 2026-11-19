@@ -19,13 +19,13 @@ func NewCmdTool() *cobra.Command {
 		Use:   "tool <command>",
 		Short: "The tool catalog; select a machine's tools and shell, pin the languages' versions",
 		Long: heredoc.Doc(`
-			The catalog lists what a template can install (Homebrew on macOS, apt or official
+			The catalog lists what nimble can install (Homebrew on macOS, apt or official
 			releases on Debian). tool select picks a machine's tools from it: checked ones are
 			installed now and recorded in its host file (tools:), so they come back on every
 			update; unchecked ones of the host file are uninstalled (after a warning and a yes).
 			Without --host it acts on this machine; with --host (from the workstation) it
 			records the change, then sends the config to that host and applies it there.
-			tool shell picks the login shell (zsh, bash or the template's) the same way.
+			tool shell picks the login shell (zsh, bash or the system's) the same way.
 
 			The languages (node, go, rust, python) run at the version in toolchain/pins.yaml,
 			the same on every machine: tool list shows them with their updates, tool use picks
@@ -164,12 +164,11 @@ func newSelect() *cobra.Command {
 		Use:   "select",
 		Short: "Select a machine's tools: check to install, uncheck to uninstall (this machine, or --host)",
 		Long: heredoc.Doc(`
-			Pick the machine's tools from the catalog for its system, with what it has checked
-			and marked where it comes from. Checked tools are installed now and recorded in
-			its host file (tools:), so they come back on every update. Unchecked tools of the
-			host file are taken out and uninstalled — nimble first warns what gets uninstalled
-			(and what it only stops managing) and asks. The template's tools stay: they change
-			with the template. Without a terminal: nimble host set <host> tools=a,b,c. On a
+			Pick the machine's tools from the catalog for its system, with its host file's
+			tools checked. Checked tools are installed now and recorded in its host file
+			(tools:), so they come back on every update. Unchecked tools are taken out and
+			uninstalled — nimble first warns what gets uninstalled (and what it only stops
+			managing) and asks. Without a terminal: nimble host set <host> tools=a,b,c. On a
 			host it changes the host's own file; the workstation's next nimble update <host>
 			takes the change into the config repo.
 		`),
@@ -192,32 +191,20 @@ func newSelect() *cobra.Command {
 	}
 }
 
-// selectTools is tool select's picker: the catalog for the machine's system with what it
-// has checked and marked. Checked tools are added, unchecked tools of the host file removed
-// (change warns and asks first); the template's tools stay.
+// selectTools is tool select's picker: the catalog for the machine's system with the host
+// file's tools checked. Checked tools are added, unchecked ones removed (change warns and
+// asks first).
 func selectTools(h config.Host, remote bool) error {
 	if !nimble.Interactive() {
 		return errors.New("tool select needs a terminal — without one: nimble host set " + h.Name + " tools=a,b,c")
 	}
-	c, err := config.Load()
-	if err != nil {
-		return err
-	}
-	r, err := config.Merge(c, &h)
-	if err != nil {
-		return err
-	}
-	has := toolSources(r, h)
 	catalog := setup.CatalogFor(targetOS(remote))
-	labels, checked, names := addChoices(catalog, has)
+	labels, checked, names := addChoices(catalog, h.Tools)
 	chosen, err := nimble.Checklist("Tools for "+h.Name+" — check to add, uncheck to remove (space toggles, enter applies):", labels, checked)
 	if err != nil {
 		return err
 	}
-	add, drop, kept := picked(catalog, chosen, names, has)
-	for _, t := range kept {
-		nimble.Say("note: " + t + " stays — it comes from " + has[t] + " (change the template for that)")
-	}
+	add, drop := picked(catalog, chosen, names, h.Tools)
 	if len(add) == 0 && len(drop) == 0 {
 		nimble.Say("nothing changed")
 		return nil
@@ -225,34 +212,14 @@ func selectTools(h config.Host, remote bool) error {
 	return change(h, remote, add, drop)
 }
 
-// change adds and removes tools on h in one go. Only the host file's own tools can be
-// removed (the template's change with the template); nimble warns what that uninstalls and,
+// change adds and removes tools on h in one go; nimble warns what removing uninstalls and,
 // on a terminal, asks first. Then on this machine the tools are uninstalled and installed,
 // the host file is written and committed once; with --host that host is updated once, and
 // what was removed is uninstalled there.
 func change(h config.Host, remote bool, add, drop []string) error {
-	c, err := config.Load()
-	if err != nil {
-		return err
-	}
 	for _, a := range append(append([]string{}, add...), drop...) {
 		if _, ok := setup.FindTool(a); !ok {
 			return fmt.Errorf("unknown tool %q (nimble tool list)", a)
-		}
-	}
-	// the host's template, read directly: it may be for another system than this one
-	name := h.Template
-	if name == "" {
-		name = c.DefaultTemplate
-	}
-	fromTemplate := map[string]bool{}
-	if name != "" {
-		t, err := config.FindTemplate(name)
-		if err != nil {
-			return err
-		}
-		for _, x := range t.Tools {
-			fromTemplate[x] = true
 		}
 	}
 	own := map[string]bool{}
@@ -260,10 +227,7 @@ func change(h config.Host, remote bool, add, drop []string) error {
 		own[x] = true
 	}
 	for _, d := range drop {
-		switch {
-		case fromTemplate[d]:
-			return fmt.Errorf("%s comes from the template %s — change the template, or give this host another one", d, name)
-		case !own[d]:
+		if !own[d] {
 			return fmt.Errorf("%s isn't in %s's host file", d, h.Name)
 		}
 	}
@@ -344,23 +308,13 @@ func change(h config.Host, remote bool, add, drop []string) error {
 	return hosts.Nimble(h.Name, hosts.Opts{Agent: true}, "tool uninstall "+strings.Join(drop, " "))
 }
 
-// toolSources maps the tools a machine already has to where they come from.
-func toolSources(r config.Resolved, h config.Host) map[string]string {
-	has := map[string]string{}
-	for _, t := range r.TemplateTools {
-		has[t] = "template " + r.Template
+// addChoices is tool select's list: every catalog tool with its short label, the host
+// file's tools checked. names maps a label back.
+func addChoices(catalog []setup.Tool, has []string) (labels, checked []string, names map[string]string) {
+	own := map[string]bool{}
+	for _, t := range has {
+		own[t] = true
 	}
-	for _, t := range h.Tools {
-		if has[t] == "" {
-			has[t] = "host file"
-		}
-	}
-	return has
-}
-
-// addChoices is tool select's list: every catalog tool with its short label, the ones the
-// machine has checked and marked (template) or (host file). names maps a label back.
-func addChoices(catalog []setup.Tool, has map[string]string) (labels, checked []string, names map[string]string) {
 	names = map[string]string{}
 	for _, t := range catalog {
 		short := t.Short
@@ -368,11 +322,7 @@ func addChoices(catalog []setup.Tool, has map[string]string) (labels, checked []
 			short = t.Desc
 		}
 		l := fmt.Sprintf("%-9s %s", t.Name, short)
-		if from := has[t.Name]; from != "" {
-			if strings.HasPrefix(from, "template") {
-				from = "template" // a machine has one template; the note after the picker names it
-			}
-			l += " (" + from + ")"
+		if own[t.Name] {
 			checked = append(checked, l)
 		}
 		labels = append(labels, l)
@@ -381,24 +331,25 @@ func addChoices(catalog []setup.Tool, has map[string]string) (labels, checked []
 	return labels, checked, names
 }
 
-// picked splits the answer, in catalog order: the newly checked tools (add), the unchecked
-// tools of the host file (drop), and the unchecked tools of the template (kept: they stay).
-func picked(catalog []setup.Tool, chosen []string, names, has map[string]string) (add, drop, kept []string) {
-	on := map[string]bool{}
+// picked splits the answer, in catalog order: the newly checked tools (add) and the
+// unchecked tools of the host file (drop).
+func picked(catalog []setup.Tool, chosen []string, names map[string]string, has []string) (add, drop []string) {
+	on, own := map[string]bool{}, map[string]bool{}
 	for _, l := range chosen {
 		on[names[l]] = true
 	}
+	for _, t := range has {
+		own[t] = true
+	}
 	for _, t := range catalog {
-		switch from := has[t.Name]; {
-		case on[t.Name] && from == "":
+		switch {
+		case on[t.Name] && !own[t.Name]:
 			add = append(add, t.Name)
-		case !on[t.Name] && from == "host file":
+		case !on[t.Name] && own[t.Name]:
 			drop = append(drop, t.Name)
-		case !on[t.Name] && from != "":
-			kept = append(kept, t.Name)
 		}
 	}
-	return add, drop, kept
+	return add, drop
 }
 
 func join(list []string) string {

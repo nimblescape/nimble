@@ -18,23 +18,23 @@ import (
 func newShell() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "shell [zsh|bash|default]",
-		Short: "Select a machine's login shell: zsh, bash or the template's (this machine, or --host)",
+		Short: "Select a machine's login shell: zsh, bash or the system's (this machine, or --host)",
 		Long: heredoc.Doc(`
-			Pick the machine's login shell, or name it: zsh, bash, or default — the template's
-			shell, else the system's (the host file then sets none). It is recorded in the host
-			file (shell:) and applied now: on this machine the dotfiles and the login shell
-			(tools are left as they are), with --host (from the workstation) on that host. On
-			a host it changes the host's own file; the workstation's next nimble update <host>
-			takes the change into the config repo.
+			Pick the machine's login shell, or name it: zsh, bash, or default — the system's
+			(the host file then sets none). It is recorded in the host file (shell:) and
+			applied now: on this machine the dotfiles and the login shell (tools are left as
+			they are), with --host (from the workstation) on that host. On a host it changes
+			the host's own file; the workstation's next nimble update <host> takes the change
+			into the config repo.
 		`),
 		Example: heredoc.Doc(`
 			nimble tool shell                    # pick this machine's shell
 			nimble tool shell bash               # this machine: bash
 			nimble tool shell zsh --host devbox  # devbox, from the workstation
-			nimble tool shell default            # back to the template's
+			nimble tool shell default            # the system's login shell
 		`),
 		Args:      cobra.MaximumNArgs(1),
-		ValidArgs: []string{"zsh\tthe Z shell", "bash\tGNU bash", "default\tthe template's shell, else the system's"},
+		ValidArgs: []string{"zsh\tthe Z shell", "bash\tGNU bash", "default\tthe system's login shell"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			h, remote, err := target()
 			if err != nil {
@@ -47,26 +47,15 @@ func newShell() *cobra.Command {
 				}
 				h, _ = config.FindHost(h.Name)
 			}
-			c, err := config.Load()
-			if err != nil {
-				return err
-			}
-			bare := h
-			bare.Shell = ""
-			r, err := config.Merge(c, &bare) // the shell without the host file's
-			if err != nil {
-				return err
-			}
-			def := defaultShell(r)
 			var want string
 			if len(args) > 0 {
 				if want = strings.ToLower(args[0]); want != "zsh" && want != "bash" && want != "default" {
 					return fmt.Errorf("unknown shell %q (zsh, bash or default)", args[0])
 				}
-			} else if want, err = pickShell(h, def); err != nil {
+			} else if want, err = pickShell(h); err != nil {
 				return err
 			}
-			return setShell(h, remote, want, def)
+			return setShell(h, remote, want)
 		},
 	}
 	cmd.Flags().StringVar(&onHost, "host", "", "a host instead of this machine (from the workstation)")
@@ -74,23 +63,14 @@ func newShell() *cobra.Command {
 	return cmd
 }
 
-// defaultShell says what "default" means for a machine: its template's shell, else the
-// system's.
-func defaultShell(r config.Resolved) string {
-	if r.Shell != "" {
-		return "the template's: " + r.Shell
-	}
-	return "the system's login shell"
-}
-
 // shellChoices is tool shell's list, the host file's setting marked. names maps a label
 // back to zsh, bash or default.
-func shellChoices(current, def string) (labels []string, selected string, names map[string]string) {
+func shellChoices(current string) (labels []string, selected string, names map[string]string) {
 	names = map[string]string{}
 	if current == "" {
 		current = "default"
 	}
-	for _, s := range []struct{ name, desc string }{{"zsh", "the Z shell"}, {"bash", "GNU bash"}, {"default", def}} {
+	for _, s := range []struct{ name, desc string }{{"zsh", "the Z shell"}, {"bash", "GNU bash"}, {"default", "the system's login shell"}} {
 		l := fmt.Sprintf("%-8s %s", s.name, s.desc)
 		if s.name == current {
 			l += " (current)"
@@ -101,11 +81,11 @@ func shellChoices(current, def string) (labels []string, selected string, names 
 	return labels, selected, names
 }
 
-func pickShell(h config.Host, def string) (string, error) {
+func pickShell(h config.Host) (string, error) {
 	if !nimble.Interactive() {
 		return "", errors.New("missing shell (zsh, bash or default): nimble tool shell bash")
 	}
-	labels, selected, names := shellChoices(h.Shell, def)
+	labels, selected, names := shellChoices(h.Shell)
 	chosen, err := nimble.Select("Login shell of "+h.Name+" (ESC or Ctrl+C to cancel):", labels, selected)
 	if err != nil {
 		return "", err
@@ -115,14 +95,14 @@ func pickShell(h config.Host, def string) (string, error) {
 
 // setShell writes the shell into h's host file ("default" removes it), commits it and
 // applies it: here only the configs and the login shell, with --host on that host.
-func setShell(h config.Host, remote bool, want, def string) error {
+func setShell(h config.Host, remote bool, want string) error {
 	value := want
 	if want == "default" {
 		value = ""
 	}
 	switch {
 	case value == h.Shell && value == "":
-		nimble.Say(h.Name + "'s host file sets no shell already — " + def)
+		nimble.Say(h.Name + "'s host file sets no shell already — the system's login shell")
 		return nil
 	case value == h.Shell:
 		nimble.Say(h.Name + "'s shell is " + value + " already")
@@ -136,8 +116,8 @@ func setShell(h config.Host, remote bool, want, def string) error {
 	}
 	what := "shell " + want
 	if value == "" {
-		what = "shell default (" + def + ")"
-		nimble.Say("hosts/" + h.Name + ".yaml: no shell — " + def)
+		what = "shell default (the system's)"
+		nimble.Say("hosts/" + h.Name + ".yaml: no shell — the system's login shell")
 	} else {
 		nimble.Say("hosts/" + h.Name + ".yaml: shell " + value)
 	}

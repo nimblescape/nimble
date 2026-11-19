@@ -93,11 +93,22 @@ func newList() *cobra.Command {
 					h := keys.HandlePath(d.Label)
 					role[keys.Fingerprint(nimble.ReadTrim(h+".pub"))] = nimble.Green("  ← in use (" + nimble.Tilde(h) + ")")
 					if fp := keys.Fingerprint(nimble.ReadTrim(h + ".old.pub")); fp != "" {
-						role[fp] = nimble.Yellow("  ← the old key, kept until every host is updated (nimble key enclave --drop-old)")
+						role[fp] = nimble.Yellow("  ← the old key, kept for the handover")
 					}
 				}
 				for _, e := range keys.Enclaves() {
 					fmt.Printf("  %-16s protection %-5s %s%s\n", e.Label, e.Protection, validity(e), role[e.Fingerprint])
+				}
+			}
+			if hs := keys.Handovers(); len(hs) > 0 {
+				nimble.Header("Handovers — renewed keys, the old one still kept")
+				for _, h := range hs {
+					fmt.Printf("  %-36s renewed %s\n", h.Key, h.Since.Format("2006-01-02"))
+					line := "    " + h.Describe(c)
+					if h.Overdue() && len(h.Waiting(c)) > 0 {
+						line = nimble.Yellow(line)
+					}
+					fmt.Println(line)
 				}
 			}
 			return nil
@@ -106,26 +117,39 @@ func newList() *cobra.Command {
 }
 
 func newEnclave() *cobra.Command {
-	var dropOld bool
+	var dropOld, renew bool
+	var handover string
 	cmd := &cobra.Command{
 		Use:   "enclave [domain]",
 		Short: "Create or renew this workstation's daily key for a domain",
 		Long: heredoc.Doc(`
 			Make sure this Mac has the domain's daily key in its Secure Enclave (Touch ID): create
-			one if there is none, renew it when it is invalid or about to expire. Then save its
-			key handle in ~/.ssh, add its public key to keys/enclave/ and commit.
+			one if there is none, renew it when it is invalid or about to expire — or now, with
+			--renew. Then save its key handle in ~/.ssh, add its public key to keys/enclave/ and
+			commit.
 
-			A renewal creates a new key next to the old one. The old key stays on this Mac (its
-			handle as ~/.ssh/id_ecdsa_sk_rk_<label>.old) and ssh keeps offering it, so every host
-			stays reachable while nimble update all rolls the new key out. Once every host has
-			it, --drop-old removes the old key for good.
+			A renewal hands over from the old key to the new one. The new key is the primary one
+			at once: it replaces the old one in keys/enclave/ and ssh offers it first, so every
+			host trusts it from its next nimble update. The old key stays on this Mac for the
+			handover time (--handover, 14 days by default, at most until it expires): its handle
+			is ~/.ssh/id_ecdsa_sk_rk_<label>.old and ssh offers it next, so the hosts that
+			weren't updated yet stay reachable. nimble update and init note each host that has
+			the new key; once every managed host of the domain has it, the next nimble update
+			removes the old key from this Mac by itself. nimble key list shows how far it is.
+			--drop-old removes it earlier, after a warning naming the hosts that would then
+			need a YubiKey.
 
 			On a new Mac a YubiKey backup gets you onto the hosts for that first nimble update all
 			(nimble update all --yubikey). Without a domain: the default domain (the first in
 			nimble.yaml), which every host without a domain: line belongs to.
 		`),
-		Example: "  nimble key enclave              # the default domain\n  nimble key enclave lab          # the domain lab\n  nimble key enclave --drop-old   # after a renewal reached every host",
-		Args:    cobra.MaximumNArgs(1),
+		Example: heredoc.Doc(`
+			nimble key enclave                          # the default domain
+			nimble key enclave lab                      # the domain lab
+			nimble key enclave --renew --handover 7d    # a new key now; the old one for a week at most
+			nimble key enclave --drop-old               # end a handover early
+		`),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runtime.GOOS != "darwin" {
 				return errors.New("daily keys in a TPM on Debian workstations come later — use a YubiKey meanwhile (nimble key yubikey)")
@@ -144,16 +168,27 @@ func newEnclave() *cobra.Command {
 			}
 			label := d.Label
 			handle := keys.HandlePath(label)
-			if dropOld {
-				return dropOldKey(c, handle)
-			}
 			machine := hosts.MachineName() + "-" + label
+			if dropOld {
+				return dropOldKey(c, handle, "enclave/"+machine)
+			}
+			span, err := keys.ParseHandover(handover)
+			if err != nil {
+				return err
+			}
 			cur, ok := keys.DailyKey(handle)
 			switch {
-			case ok && !cur.ExpiresSoon():
+			case ok && !cur.ExpiresSoon() && !renew:
 				nimble.Step("Secure Enclave key " + cur.Label + " — " + validity(cur))
 			case ok: // renew: a new key next to the old one, which stays until the hosts have the new one
-				nimble.Step("the daily key " + cur.Label + " is " + validity(cur) + " — renewing it")
+				if nimble.Exists(handle + ".old.pub") {
+					return errors.New("a handover from an earlier renewal is still running (" + nimble.Tilde(handle+".old") + ") — let it end, or end it: nimble key enclave --drop-old")
+				}
+				if renew {
+					nimble.Step("renewing the daily key " + cur.Label + " (" + validity(cur) + ")")
+				} else {
+					nimble.Step("the daily key " + cur.Label + " is " + validity(cur) + " — renewing it")
+				}
 				e, err := createEnclave(label)
 				if err != nil {
 					return err
@@ -173,11 +208,19 @@ func newEnclave() *cobra.Command {
 					return err
 				}
 				sshConfig(c)
+				until := time.Now().Add(span)
+				if !cur.ValidTo.IsZero() && cur.ValidTo.Before(until) {
+					until = cur.ValidTo // the old key can't hand over longer than it lives
+				}
+				h := keys.Handover{Key: "enclave/" + machine, Old: cur.Fingerprint, Since: time.Now(), Until: until}
+				if err := keys.StartHandover(h); err != nil {
+					return err
+				}
 				if err := nimble.Record("keys: renew enclave/"+machine, "keys"); err != nil {
 					return err
 				}
-				nimble.Step("roll it out: nimble update all — the old key still opens the hosts until they have the new one")
-				nimble.Step("then remove the old key from this Mac: nimble key enclave --drop-old")
+				nimble.Say("the new key " + e.Label + " is the daily key now; the old one " + cur.Label + " stays on this Mac until every host has the new one, at most until " + until.Format("2006-01-02"))
+				nimble.Step("roll it out: nimble update all — the old key opens the hosts until they have the new one; then nimble removes it")
 				return nil
 			default: // no handle here, or its key is gone: use a valid key with this label, else create one
 				e, found := keys.FindEnclave(label)
@@ -206,7 +249,9 @@ func newEnclave() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&dropOld, "drop-old", false, "after a renewal reached every host: remove the old key from this Mac")
+	cmd.Flags().BoolVar(&renew, "renew", false, "create a new key now, even if the current one is still valid")
+	cmd.Flags().StringVar(&handover, "handover", "14d", "how long a renewal keeps the old key at most (e.g. 7d, 2w)")
+	cmd.Flags().BoolVar(&dropOld, "drop-old", false, "end a handover now: remove the old key from this Mac")
 	return cmd
 }
 
@@ -290,37 +335,38 @@ func sshConfig(c *config.Config) {
 	}
 }
 
-// dropOldKey removes the key a renewal kept: its handle (.old) and the key in the Secure
-// Enclave. Hosts that didn't get the new key yet can then only be reached with a YubiKey.
-func dropOldKey(c *config.Config, handle string) error {
+// dropOldKey ends a handover early: it removes the key a renewal kept, its handle (.old)
+// and the key in the Secure Enclave. The hosts that don't have the new key yet can then
+// only be reached with a YubiKey, so nimble names them and asks first.
+func dropOldKey(c *config.Config, handle, key string) error {
 	old := handle + ".old"
 	if !nimble.Exists(old + ".pub") {
 		nimble.Step("no old key is kept (" + nimble.Tilde(old) + " doesn't exist)")
-		return nil
+		return keys.EndHandover(key)
 	}
-	e, inEnclave := keys.DailyKey(old)
 	what := "the old key handle " + nimble.Tilde(old)
-	if inEnclave {
+	if e, ok := keys.DailyKey(old); ok {
 		what = "the old Secure Enclave key " + e.Label + " (" + validity(e) + ")"
 	}
 	nimble.Step("remove " + what)
-	if !nimble.Confirm("Has every managed host had nimble update since the renewal? A host that hasn't can then only be reached with a YubiKey backup.", false) {
-		return errors.New("kept the old key")
-	}
-	if inEnclave {
-		if cur, ok := keys.DailyKey(handle); ok && cur.Hash == e.Hash {
-			return errors.New("the old handle points at the key in use — not removing it")
+	h, tracked := keys.FindHandover(key)
+	switch waiting := h.Waiting(c); {
+	case !tracked: // renewed by an older nimble: it didn't note the updated hosts
+		if !nimble.Confirm("Has every managed host had nimble update since the renewal? A host that hasn't can then only be reached with a YubiKey backup.", false) {
+			return errors.New("kept the old key")
 		}
-		if err := nimble.Run("sc_auth", "delete-ctk-identity", "-h", e.Hash); err != nil {
-			return err
+	case len(waiting) > 0:
+		nimble.Warn("still without the new key: " + strings.Join(waiting, ", ") + " — after this only a YubiKey backup reaches them")
+		if !nimble.Confirm("Remove the old key anyway?", false) {
+			return errors.New("kept the old key — nimble update " + strings.Join(waiting, " ") + " first")
 		}
 	}
-	for _, suffix := range []string{"", ".pub"} {
-		_ = os.Remove(old + suffix)
+	if err := keys.DropOldEnclave(handle); err != nil {
+		return err
 	}
 	sshConfig(c)
 	nimble.Say("removed the old daily key")
-	return nil
+	return keys.EndHandover(key)
 }
 
 // addToRepo copies a public key into keys/<kind>/<name>.pub unless it is already trusted.
@@ -347,9 +393,11 @@ func addToRepo(pubFile, kind, name string) (bool, error) {
 }
 
 func newYubikey() *cobra.Command {
-	return &cobra.Command{
+	var renew, dropOld bool
+	var handover string
+	cmd := &cobra.Command{
 		Use:   "yubikey [name]",
-		Short: "Set up and register YubiKeys as backups (guided)",
+		Short: "Set up, register and renew YubiKeys as backups (guided)",
 		Long: heredoc.Doc(`
 			Guides you through one YubiKey after another: plug it in; if it is new, choose its
 			FIDO2 PIN; nimble creates a resident key on it (PIN and touch needed for every use)
@@ -360,18 +408,51 @@ func newYubikey() *cobra.Command {
 			reach the hosts with a backup — on a new workstation, or when the daily key is lost
 			or expired — add --yubikey to the command: nimble update all --yubikey.
 
+			--renew <name> gives a registered YubiKey a new key, handed over like a daily key:
+			the new key goes on the YubiKey next to the old one and replaces it in
+			keys/yubikey/, so every host trusts it from its next nimble update; until then the
+			old one still opens the hosts (--yubikey offers both). nimble update and init note
+			each host that has the new key; nimble key list shows how far the handover is, and
+			says when every managed host has it (--handover is the deadline, 14 days by
+			default). Then plug the YubiKey in once more: --drop-old <name> deletes the old key
+			from it.
+
 			Uses ykman and an OpenSSH that talks to FIDO keys, which nimble apply sets up on
 			every workstation.
 		`),
-		Example: "  nimble key yubikey safe-home",
-		Args:    cobra.MaximumNArgs(1),
+		Example: heredoc.Doc(`
+			nimble key yubikey safe-home              # register a YubiKey
+			nimble key yubikey --renew safe-home      # give it a new key, hand over from the old one
+			nimble key yubikey --drop-old safe-home   # every host has the new key: delete the old one
+		`),
+		Args: cobra.MaximumNArgs(1),
+		ValidArgsFunction: func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+			return yubikeyNames(), cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, keygen, ok := keys.FIDOSSH()
 			if _, err := exec.LookPath("ykman"); !ok || err != nil {
 				return errors.New("YubiKeys need ykman and an OpenSSH that talks to FIDO keys — nimble apply sets them up, then again")
 			}
 			if !nimble.Interactive() {
-				return errors.New("registering a YubiKey is a guided dialog (PIN, touch) — run it in a terminal")
+				return errors.New("a YubiKey takes a guided dialog (PIN, touch) — run it in a terminal")
+			}
+			if renew || dropOld {
+				if renew && dropOld {
+					return errors.New("--renew or --drop-old, not both")
+				}
+				name, err := nimble.Arg(args, 0, "YubiKey", yubikeyNames())
+				if err != nil {
+					return err
+				}
+				if renew {
+					span, err := keys.ParseHandover(handover)
+					if err != nil {
+						return err
+					}
+					return renewYubikey(keygen, name, span)
+				}
+				return dropOldYubikey(keygen, name)
 			}
 			name := ""
 			if len(args) == 1 {
@@ -414,11 +495,24 @@ func newYubikey() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&renew, "renew", false, "give a registered YubiKey a new key and hand over from the old one")
+	cmd.Flags().StringVar(&handover, "handover", "14d", "with --renew: the deadline for every host to get the new key (e.g. 30d, 4w)")
+	cmd.Flags().BoolVar(&dropOld, "drop-old", false, "end a handover: delete the old key from the YubiKey")
+	return cmd
 }
 
-// registerYubikey sets one YubiKey up and adds its key to keys/yubikey/<name>.pub: a FIDO2
-// PIN if it has none, then the nimble key it carries already, else a new resident key.
-func registerYubikey(keygen, name string) (bool, error) {
+func yubikeyNames() []string {
+	var names []string
+	for _, k := range keys.Repo() {
+		if k.Kind == "yubikey" {
+			names = append(names, k.Name)
+		}
+	}
+	return names
+}
+
+// plugIn waits until exactly one YubiKey — the one called name — is plugged in.
+func plugIn(name string) {
 	nimble.Pause("Plug in the YubiKey '" + name + "' — only this one")
 	for n := keys.Plugged(); n != 1 && n >= 0; n = keys.Plugged() {
 		if n == 0 {
@@ -427,6 +521,127 @@ func registerYubikey(keygen, name string) (bool, error) {
 			nimble.Pause(fmt.Sprintf("%d YubiKeys plugged in — unplug all but '%s'", n, name))
 		}
 	}
+}
+
+// identify reads the nimble keys on the plugged-in YubiKey (asks for its PIN) and checks
+// that it is the registered backup name: its handles, the registered one first.
+func identify(keygen, name, dir string) ([]string, error) {
+	nimble.Step("read its nimble keys: enter the YubiKey's PIN")
+	handles, err := keys.BackupHandles(keygen, dir)
+	if err != nil {
+		return nil, err
+	}
+	if len(handles) > 0 {
+		if k, ok := keys.Registered(handles[0] + ".pub"); ok && k.Name == name {
+			return handles, nil
+		}
+	}
+	return nil, errors.New("this YubiKey isn't '" + name + "': none of its keys is keys/yubikey/" + name + ".pub — plug in the right one")
+}
+
+// renewYubikey gives the registered YubiKey name a new resident key next to its old one
+// (an application of its own, so the old credential stays), puts the new public key into
+// keys/yubikey/<name>.pub and starts the handover.
+func renewYubikey(keygen, name string, span time.Duration) error {
+	key := "yubikey/" + name
+	if h, ok := keys.FindHandover(key); ok {
+		return errors.New("a handover of " + name + " since " + h.Since.Format("2006-01-02") + " isn't finished — end it first: nimble key yubikey --drop-old " + name)
+	}
+	plugIn(name)
+	tmp, err := os.MkdirTemp("", "nimble-yubikey")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	handles, err := identify(keygen, name, tmp)
+	if err != nil {
+		return err
+	}
+	old := handles[0]
+	now := time.Now()
+	nimble.Step("create the new key: enter the PIN, then touch the YubiKey when it blinks")
+	if err := nimble.Run(keygen, "-t", "ed25519-sk", "-O", "resident", "-O", "verify-required",
+		"-O", "application="+keys.RenewedApplication(now), "-C", "yubikey-"+name, "-N", "", "-f", filepath.Join(tmp, "renewed")); err != nil {
+		return fmt.Errorf("%w — is the PIN right?", err)
+	}
+	p := keys.Parse(nimble.ReadTrim(filepath.Join(tmp, "renewed.pub")))
+	if p.Key == "" {
+		return errors.New("ssh-keygen wrote no public key")
+	}
+	if err := os.WriteFile(nimble.RepoFile("keys", "yubikey", name+".pub"), []byte(p.Type+" "+p.Key+" "+name+"\n"), 0o644); err != nil {
+		return err
+	}
+	h := keys.Handover{Key: key, Old: keys.Fingerprint(nimble.ReadTrim(old + ".pub")), OldApp: keys.Application(old), Since: now, Until: now.Add(span)}
+	if err := keys.StartHandover(h); err != nil {
+		return err
+	}
+	if err := nimble.Record("keys: renew yubikey/"+name, "keys"); err != nil {
+		return err
+	}
+	nimble.Say("'" + name + "' carries the new key and, until the handover ends, the old one")
+	nimble.Pause("Unplug '" + name + "' — it can go back into its safe")
+	nimble.Step("roll it out: nimble update all (by " + h.Until.Format("2006-01-02") + ") — nimble key list shows which hosts still trust only the old key")
+	nimble.Step("then delete the old key from it: nimble key yubikey --drop-old " + name)
+	return nil
+}
+
+// dropOldYubikey ends a handover: it deletes every nimble key but the registered one from
+// the YubiKey name. A host that doesn't trust the new key yet can then no longer be reached
+// with this YubiKey, so nimble names them and asks first.
+func dropOldYubikey(keygen, name string) error {
+	c, err := config.Load()
+	if err != nil {
+		return err
+	}
+	key := "yubikey/" + name
+	if h, ok := keys.FindHandover(key); ok {
+		if waiting := h.Waiting(c); len(waiting) > 0 {
+			nimble.Warn("still without the new key: " + strings.Join(waiting, ", ") + " — after this, '" + name + "' no longer reaches them")
+			if !nimble.Confirm("Delete the old key anyway?", false) {
+				return errors.New("kept the old key — nimble update " + strings.Join(waiting, " ") + " first")
+			}
+		}
+	}
+	plugIn(name)
+	tmp, err := os.MkdirTemp("", "nimble-yubikey")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	handles, err := identify(keygen, name, tmp)
+	if err != nil {
+		return err
+	}
+	current := keys.Application(handles[0])
+	nimble.Step("list its credentials: enter the PIN once more")
+	creds, err := keys.Credentials()
+	if err != nil {
+		return err
+	}
+	dropped := 0
+	for _, cr := range creds {
+		if !strings.HasPrefix(cr.App, keys.BackupApplication) || cr.App == current || current == "" {
+			continue // not nimble's, or the key in use
+		}
+		nimble.Step("delete the old key " + cr.App + " (enter the PIN)")
+		if err := keys.DeleteCredential(cr); err != nil {
+			return err
+		}
+		dropped++
+	}
+	if dropped == 0 {
+		nimble.Say("'" + name + "' carries no old nimble key")
+	} else {
+		nimble.Say("deleted the old key from '" + name + "'")
+	}
+	nimble.Pause("Unplug '" + name + "' — it can go back into its safe")
+	return keys.EndHandover(key)
+}
+
+// registerYubikey sets one YubiKey up and adds its key to keys/yubikey/<name>.pub: a FIDO2
+// PIN if it has none, then the nimble key it carries already, else a new resident key.
+func registerYubikey(keygen, name string) (bool, error) {
+	plugIn(name)
 	if set, known := keys.FIDOPin(); known && !set {
 		nimble.Step("this YubiKey has no FIDO2 PIN yet: choose one (at least 4 characters). It is asked for at every use, and 8 wrong tries in a row block the key")
 		if err := nimble.Run("ykman", "fido", "access", "change-pin"); err != nil {
@@ -443,11 +658,11 @@ func registerYubikey(keygen, name string) (bool, error) {
 	// key registered for it would stop working: look first.
 	nimble.Step("look for a nimble key on it: enter the YubiKey's PIN")
 	pub := ""
-	if handle, err := keys.BackupHandle(keygen, tmp); err != nil {
+	if handles, err := keys.BackupHandles(keygen, tmp); err != nil {
 		nimble.Warn(err.Error() + " — creating a new key")
-	} else if handle != "" {
+	} else if len(handles) > 0 { // the registered one, else the newest
 		nimble.Step("it carries a nimble key already: registering that one")
-		pub = handle + ".pub"
+		pub = handles[0] + ".pub"
 	}
 	if pub == "" {
 		nimble.Step("create the key: enter the PIN, then touch the YubiKey when it blinks")
@@ -499,6 +714,9 @@ func newRemove() *cobra.Command {
 				return err
 			}
 			nimble.Say("removed keys/" + target.Kind + "/" + target.Name + ".pub")
+			if err := keys.EndHandover(target.Kind + "/" + target.Name); err != nil { // nothing left to hand over to
+				return err
+			}
 			if err := nimble.Record("keys: remove "+target.Kind+"/"+target.Name, "keys"); err != nil {
 				return err
 			}

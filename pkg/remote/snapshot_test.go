@@ -19,9 +19,9 @@ func TestSnapshot(t *testing.T) {
 		os.MkdirAll(filepath.Dir(p), 0o755)
 		os.WriteFile(p, []byte(body), 0o644)
 	}
-	w("nimble.yaml", "defaultTemplate: dev\ndomains:\n  home:\n    label: ssh\n  school:\n    label: htl\nlinks: []\n")
+	w("nimble.yaml", "format: 2\ndefaultTemplate: dev\ndomains:\n  home:\n    label: ssh\n  school:\n    label: htl\nlinks: []\n")
 	w("hosts/swan.yaml", "address: swan.example.com\nuser: debian\n")
-	w("hosts/vm.yaml", "address: vm.example.com\nuser: hannes\ndomain: school\ntemplate: prompt\n")
+	w("hosts/vm.yaml", "address: vm.example.com\nuser: hannes\ndomain: school\ntools: [starship]\n")
 	w("templates/dev.yaml", "tools: [go]\n")
 	w("templates/prompt.yaml", "tools: [starship]\n")
 	w("toolchain/pins.yaml", "go: 1.27.2\n")
@@ -48,7 +48,7 @@ func TestSnapshot(t *testing.T) {
 		return nil
 	})
 	joined := strings.Join(got, " ")
-	for _, want := range []string{"hosts/vm.yaml", "templates/prompt.yaml", "toolchain/pins.yaml", "shell/common.sh",
+	for _, want := range []string{"hosts/vm.yaml", "toolchain/pins.yaml", "shell/common.sh",
 		"keys/enclave/mac-htl.pub", "keys/yubikey/safe1.pub", "personal/git/config", "personal/nimble.yaml", "nimble.yaml", ".snapshot",
 		".sent/hosts/vm.yaml"} {
 		if !strings.Contains(joined, want) {
@@ -64,7 +64,7 @@ func TestSnapshot(t *testing.T) {
 	if m := read(".snapshot"); strings.Contains(m, "from") || !strings.HasPrefix(m, "host: vm\n") {
 		t.Errorf("marker %q", m)
 	}
-	for _, not := range []string{"hosts/swan.yaml", "templates/dev.yaml", "keys/enclave/mac-ssh.pub", "personal/macos/Brewfile", "cli/main.go"} {
+	for _, not := range []string{"hosts/swan.yaml", "templates/", "keys/enclave/mac-ssh.pub", "personal/macos/Brewfile", "cli/main.go"} {
 		if strings.Contains(joined, not) {
 			t.Errorf("%s must not be in the snapshot", not)
 		}
@@ -74,7 +74,7 @@ func TestSnapshot(t *testing.T) {
 	if errs := config.Validate([]string{"starship", "go"}); len(errs) > 0 {
 		t.Fatalf("snapshot invalid: %v", errs)
 	}
-	if c, err := config.Load(); err != nil || len(c.Domains) != 1 || c.Domains[0].Name != "school" || c.DefaultTemplate != "prompt" || len(c.Links) != 1 {
+	if c, err := config.Load(); err != nil || len(c.Domains) != 1 || c.Domains[0].Name != "school" || c.Format != 2 || c.DefaultTemplate != "" || len(c.Links) != 1 {
 		t.Fatalf("snapshot config %+v %v", c, err)
 	}
 }

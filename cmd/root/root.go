@@ -1,6 +1,7 @@
 package root
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/MakeNowJust/heredoc"
@@ -20,6 +21,7 @@ import (
 	"github.com/nimblescape/nimble/cmd/template"
 	"github.com/nimblescape/nimble/cmd/tool"
 	"github.com/nimblescape/nimble/cmd/update"
+	"github.com/nimblescape/nimble/pkg/config"
 	"github.com/nimblescape/nimble/pkg/hosts"
 	"github.com/nimblescape/nimble/pkg/nimble"
 	"github.com/spf13/cobra"
@@ -54,6 +56,9 @@ func NewRootCmd(version string) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(c *cobra.Command, args []string) error {
+			if err := migrate(c); err != nil {
+				return err
+			}
 			if edits[strings.TrimPrefix(c.CommandPath(), "nimble ")] {
 				if err := nimble.Editable(); err != nil {
 					return err
@@ -86,4 +91,30 @@ func NewRootCmd(version string) *cobra.Command {
 	// plumbing that init and update run
 	cmd.AddCommand(apply.NewCmdApply(), harden.NewCmdHarden(), bootstrap.NewCmdBootstrap())
 	return cmd
+}
+
+// migrate brings a config checkout written by an older nimble up to date before a command
+// reads it: once, the templates are copied into the host files (config.MigrateHosts) and
+// that is committed. Shell completion and hosts (their snapshot comes migrated) skip it.
+func migrate(c *cobra.Command) error {
+	switch c.Name() {
+	case cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd, "completion", "help":
+		return nil
+	}
+	if p := c.Parent(); (p != nil && p.Name() == "completion") || !nimble.IsCheckout() || nimble.IsSnapshot() {
+		return nil
+	}
+	changed, migrated, err := config.MigrateHosts()
+	if err != nil {
+		return fmt.Errorf("copying the templates into the host files: %w", err)
+	}
+	if !migrated {
+		return nil
+	}
+	msg := "hosts: copy the templates into the host files\n\nA host file now holds its tools and shell itself; templates are starting points\nthat host create and host set template= copy in."
+	if len(changed) > 0 {
+		nimble.Say("templates are copied into the host files now: " + strings.Join(changed, ", ") + " — each holds its own tools and shell from here on")
+		msg += "\n\nCopied into: " + strings.Join(changed, ", ")
+	}
+	return nimble.Record(msg, "hosts", "nimble.yaml")
 }

@@ -23,8 +23,9 @@ func NewCmdHost() *cobra.Command {
 		Short: "Manage the hosts: one YAML file per machine in hosts/",
 		Long: heredoc.Doc(`
 			hosts/ holds one YAML file per machine, workstations included: address, admin
-			user, domain, mode (managed, ssh, workstation), template, extra tools, login shell
-			and services. The workstation's ssh config is generated from it.
+			user, domain, mode (managed, ssh, workstation), tools, login shell and services.
+			A template is copied in (host create, host set <name> template=…), not referenced.
+			The workstation's ssh config is generated from it.
 		`),
 	}
 	cmd.AddCommand(newCreate(), newSet(), newEdit(), newList(), newShow(), newRemove())
@@ -57,13 +58,16 @@ func problems(name string) []error {
 
 func newCreate() *cobra.Command {
 	var h config.Host
+	var from string
 	var noInit bool
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Add a host (guided), then offer to set it up",
 		Long: heredoc.Doc(`
 			Write hosts/<name>.yaml — asking for whatever the flags don't give — regenerate
-			the ssh config, commit, then offer nimble init <name>.
+			the ssh config, commit, then offer nimble init <name>. The template's tools and
+			shell are copied into the file: from then on they are the host's own, and a later
+			change to the template doesn't change the host.
 		`),
 		Example: "  nimble host create devbox --address devbox.example.com",
 		Args:    cobra.MaximumNArgs(1),
@@ -103,20 +107,21 @@ func newCreate() *cobra.Command {
 			if _, err := c.Domain(h.Domain); err != nil {
 				return err
 			}
-			if h.Template == "" && h.Mode != "ssh" {
+			// the template is copied in: its tools and shell become the host file's own
+			if from == "" && h.Mode != "ssh" {
 				ts, _ := config.Templates()
 				var names []string
 				for _, t := range ts {
 					names = append(names, t.Name)
 				}
-				if t := nimble.Ask("Template ("+strings.Join(names, ", ")+"; empty = the default)?", ""); t != "" {
-					h.Template = t
-				}
+				from = nimble.Ask("Template to copy ("+strings.Join(names, ", ")+"; none = no tools)?", c.DefaultTemplate)
 			}
-			if h.Template != "" {
-				if _, err := config.FindTemplate(h.Template); err != nil {
+			if from != "" && from != "none" {
+				t, err := config.TemplateFor(from, h)
+				if err != nil {
 					return err
 				}
+				h.Tools, h.Shell = t.Tools, t.Shell
 			}
 			if h.Mode == "managed" {
 				h.Mode = "" // the default
@@ -142,7 +147,7 @@ func newCreate() *cobra.Command {
 	cmd.Flags().StringVar(&h.Address, "address", "", "hostname or IP address")
 	cmd.Flags().StringVar(&h.User, "user", "", "admin user (default debian)")
 	cmd.Flags().StringVar(&h.Domain, "domain", "", "domain from nimble.yaml")
-	cmd.Flags().StringVar(&h.Template, "template", "", "template (default: the default template)")
+	cmd.Flags().StringVar(&from, "template", "", "template whose tools and shell are copied in (default: the default template)")
 	cmd.Flags().StringVar(&h.Mode, "mode", "", "managed, ssh or workstation")
 	cmd.Flags().BoolVar(&noInit, "no-init", false, "don't offer to set the host up")
 	return cmd
@@ -151,9 +156,15 @@ func newCreate() *cobra.Command {
 func newSet() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <name> key=value…",
-		Short: "Change a host's settings (address, user, domain, mode, template, tools, shell)",
+		Short: "Change a host's settings (address, user, domain, mode, tools, shell; template= copies one in)",
+		Long: heredoc.Doc(`
+			Change settings of a host file: address, user, domain, mode, tools (comma list),
+			shell; an empty value removes the key. template=<name> isn't kept as a setting: it
+			copies that template's tools and shell over the host's (nimble warns what that
+			drops from its tools, and asks on a terminal).
+		`),
 		Example: heredoc.Doc(`
-			nimble host set devbox template=dev
+			nimble host set devbox template=dev   # copy dev's tools and shell in
 			nimble host set devbox tools=docker,gh
 			nimble host set devbox shell=bash
 		`),
@@ -169,11 +180,18 @@ func newSet() *cobra.Command {
 			}
 			settings := args[min(1, len(args)):]
 			if len(settings) == 0 {
-				s, err := nimble.Arg(nil, 0, "change (key=value; keys: address, user, domain, mode, template, tools, shell)", nil)
+				s, err := nimble.Arg(nil, 0, "change (key=value; keys: address, user, domain, mode, tools, shell, template)", nil)
 				if err != nil {
 					return err
 				}
 				settings = []string{s}
+			}
+			for _, kv := range settings {
+				if k, v, _ := strings.Cut(kv, "="); k == "template" {
+					if err := confirmCopy(name, v); err != nil {
+						return err
+					}
+				}
 			}
 			before, err := os.ReadFile(config.HostFile(name))
 			if err != nil {
@@ -208,6 +226,49 @@ func newSet() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// confirmCopy says what copying template name over host's tools and shell drops, and on a
+// terminal asks first; without one it goes ahead (the command line asked for it).
+func confirmCopy(host, name string) error {
+	h, ok := config.FindHost(host)
+	if !ok {
+		return fmt.Errorf("no host %s (nimble host list)", host)
+	}
+	t, err := config.TemplateFor(name, h)
+	if err != nil {
+		return err
+	}
+	keep := map[string]bool{}
+	for _, x := range t.Tools {
+		keep[x] = true
+	}
+	var dropped []string
+	for _, x := range h.Tools {
+		if !keep[x] {
+			dropped = append(dropped, x)
+		}
+	}
+	shell := t.Shell
+	if shell == "" {
+		shell = "the system's"
+	}
+	nimble.Say("copy template " + name + " into hosts/" + host + ".yaml: tools [" + strings.Join(t.Tools, ", ") + "], shell " + shell)
+	if len(dropped) == 0 {
+		return nil
+	}
+	nimble.Warn("no longer in " + host + "'s tools: " + strings.Join(dropped, ", ") + " (they stay installed; nimble tool select uninstalls)")
+	if !nimble.Interactive() {
+		return nil
+	}
+	yes, err := nimble.ConfirmOrCancel("Replace "+host+"'s tools with template "+name+"'s?", false)
+	if err != nil {
+		return err
+	}
+	if !yes {
+		return nimble.ErrCancelled
+	}
+	return nil
 }
 
 func newEdit() *cobra.Command {
@@ -257,7 +318,7 @@ func newList() *cobra.Command {
 			for _, h := range hs {
 				w = max(w, len(h.Name))
 			}
-			fmt.Printf("  %-*s  %-11s %-44s %-13s %s\n", w, "name", "mode", "address", "domain", "template")
+			fmt.Printf("  %-*s  %-11s %-44s %-13s %-7s %s\n", w, "name", "mode", "address", "domain", "shell", "tools")
 			for _, h := range hs {
 				mode := "managed"
 				if !h.Managed() {
@@ -267,16 +328,19 @@ func newList() *cobra.Command {
 				if addr != "" {
 					addr = h.AdminUser() + "@" + addr
 				}
-				tmpl := h.Template
-				if tmpl == "" && (h.Managed() || h.Workstation()) {
-					tmpl = c.DefaultTemplate + " (default)"
+				shell, tools := h.Shell, strings.Join(h.Tools, ",")
+				switch {
+				case !h.Managed() && !h.Workstation():
+					shell, tools = "-", "-" // nimble installs nothing there
+				case shell == "":
+					shell = "system"
 				}
 				dom := h.Domain
 				if dom == "" && h.Managed() {
 					d, _ := c.Domain("")
 					dom = d.Name
 				}
-				fmt.Printf("  %-*s  %-11s %-44s %-13s %s\n", w, h.Name, mode, addr, dom, tmpl)
+				fmt.Printf("  %-*s  %-11s %-44s %-13s %-7s %s\n", w, h.Name, mode, addr, dom, shell, tools)
 			}
 			return nil
 		},
@@ -286,12 +350,12 @@ func newList() *cobra.Command {
 func newShow() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <name>",
-		Short: "Print a host's configuration, merged with its template and the defaults",
+		Short: "Print a host's configuration with the defaults it leaves out",
 		Long: heredoc.Doc(`
-			Print what applies to a host: its own settings, the defaults it leaves out, and its
-			template's tools and shell folded in. A value without a comment comes from the host
-			file; the others say where they come from (default, template <name>). The host
-			file's own comments at the top are kept. nimble host edit opens the file itself.
+			Print what applies to a host: its own settings (tools and shell included — a
+			template was copied in) and the defaults it leaves out. A value without a comment
+			comes from the host file; the others say where they come from. The host file's own
+			comments at the top are kept. nimble host edit opens the file itself.
 		`),
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: hosts.CompleteHostNames,
@@ -334,9 +398,9 @@ func headComments(file string) string {
 	return b.String()
 }
 
-// merged is a host's configuration as nimble applies it: the host file's settings, the
-// defaults it leaves out, and its template's tools and shell. A value from the host file
-// has no comment; every other value says where it comes from.
+// merged is a host's configuration as nimble applies it: the host file's settings and the
+// defaults it leaves out. A value from the host file has no comment; every other value
+// says where it comes from.
 func merged(c *config.Config, h config.Host, head string) (string, error) {
 	var b strings.Builder
 	b.WriteString(head)
@@ -375,38 +439,22 @@ func merged(c *config.Config, h config.Host, head string) (string, error) {
 	}
 	line("mode: "+mode, or(h.Mode != "", "default"))
 	if !h.Managed() && !h.Workstation() {
-		b.WriteString("# reached over ssh only: nimble installs nothing here, no template or hardening\n")
+		b.WriteString("# reached over ssh only: nimble installs nothing here, no tools or hardening\n")
 		return b.String(), nil
 	}
 
-	r, err := config.Merge(c, &h)
-	if err != nil {
-		return "", err
-	}
-	if r.Template == "" {
-		b.WriteString("# no template (nimble.yaml has no defaultTemplate): only the host's own tools\n")
-	} else {
-		line("template: "+r.Template, or(h.Template != "", "default: defaultTemplate in nimble.yaml"))
-	}
-	fromTemplate := map[string]bool{}
-	for _, t := range r.TemplateTools {
-		fromTemplate[t] = true
-	}
-	if len(r.Tools) == 0 {
-		line("tools: []", or(r.Template == "", "template "+r.Template+" has none"))
+	if len(h.Tools) == 0 {
+		line("tools: []", "none")
 	} else {
 		b.WriteString("tools:\n")
-		for _, t := range r.Tools {
-			line("  - "+t, or(!fromTemplate[t], "template "+r.Template))
+		for _, t := range h.Tools {
+			line("  - "+t, "")
 		}
 	}
-	switch {
-	case h.Shell != "":
+	if h.Shell != "" {
 		line("shell: "+h.Shell, "")
-	case r.Shell != "":
-		line("shell: "+r.Shell, "template "+r.Template)
-	default:
-		b.WriteString("# shell: the system's default login shell (neither the template nor the host sets one)\n")
+	} else {
+		b.WriteString("# shell: the system's default login shell (the host file sets none)\n")
 	}
 
 	if h.Managed() {

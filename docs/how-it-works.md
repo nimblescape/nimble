@@ -43,9 +43,9 @@ The repo lives at `$NIMBLE_HOME`, by default `~/.nimble` (`nimble path` prints i
 
 | Path | Holds |
 |---|---|
-| `nimble.yaml` | `defaultTemplate`, `domains`, shared `links` |
-| `hosts/<name>.yaml` | One machine each, workstations included |
-| `templates/<name>.yaml` | Which tools and login shell a machine gets |
+| `nimble.yaml` | `format`, `defaultTemplate`, `domains`, shared `links` |
+| `hosts/<name>.yaml` | One machine each, workstations included: its tools and login shell among them |
+| `templates/<name>.yaml` | Starting points: tools and a login shell that `host create` copies into a host file |
 | `keys/enclave/<machine>-<label>.pub` | A workstation's daily key (Secure Enclave) |
 | `keys/yubikey/<name>.pub` | A YubiKey backup |
 | `toolchain/pins.yaml` | The pinned languages and the npm, Go and uv tools |
@@ -61,7 +61,8 @@ All YAML is parsed strictly: an unknown key or a wrong type is an error. Keys ar
 ### nimble.yaml
 
 ```yaml
-defaultTemplate: dev        # template for machines whose host file names none
+format: 2                   # host files hold their tools and shell (see Templates)
+defaultTemplate: dev        # what host create offers to copy; machines without a host file get it
 domains:                    # in order; the first is the default
   main:
     label: ssh              # label of the domain's daily key
@@ -83,9 +84,8 @@ An **administration domain** decides which keys a host trusts (see [Keys and dom
 | `user` | the admin user on the host | `debian` |
 | `domain` | a domain from `nimble.yaml` | the first domain |
 | `mode` | `managed`, `ssh`, `workstation` | `managed` |
-| `template` | a template from `templates/` | `defaultTemplate` |
-| `tools` | extra tools from the catalog | none |
-| `shell` | `zsh`, `bash` (overrides the template's) | the template's |
+| `tools` | tools from the catalog | none: nothing is installed |
+| `shell` | `zsh`, `bash` | none: the login shell stays as it is |
 | `services` | list of `{service: claude, repo: owner/name, state: enabled\|disabled}` | none |
 | `harden` | `full`, or `sudo` for a host someone else manages | `full` |
 | `sudoAllowed` | accounts that keep their sudo rights, e.g. a service account | none |
@@ -94,15 +94,15 @@ An **administration domain** decides which keys a host trusts (see [Keys and dom
 # hosts/devbox.yaml
 address: devbox.example.com
 user: debian
-template: dev
-tools: [docker]
+tools: [starship, node, go, python, docker]
+shell: zsh
 services:
   - service: claude
     repo: owner/app
     state: enabled
 ```
 
-`host create` asks for mode, address, admin user, domain and template, checks and writes the file, regenerates the ssh config (on a workstation) and offers `nimble init <name>`. A host name has lower-case letters, digits, `.`, `-` and `_`. `host set <name> key=value…` changes `address`, `user`, `domain`, `mode`, `template`, `shell` or `tools` (comma list; an empty value removes the key), validates the whole repo and restores the file if that fails. `host edit` opens the file in your editor (see "The editor" below) and validates it when you close it. `host show <name>` prints the configuration as nimble applies it: the file's settings, the defaults it leaves out (`mode: managed`, `user: debian`, the first domain, `harden: full`; on a workstation no admin user, domain or hardening) and its template's tools and shell, each value not from the file marked with where it comes from (`# default`, `# template dev`); the file's leading comments are kept. `host remove` deletes the file; the host itself is not touched.
+`host create` asks for mode, address, admin user, domain and the template to copy (`--template`; the default is `defaultTemplate`, `none` copies nothing; a host reached over ssh only gets none), copies that template's tools and shell into the file, checks and writes it, regenerates the ssh config (on a workstation) and offers `nimble init <name>`. A host name has lower-case letters, digits, `.`, `-` and `_`. `host set <name> key=value…` changes `address`, `user`, `domain`, `mode`, `shell` or `tools` (comma list; an empty value removes the key), validates the whole repo and restores the file if that fails. `template=<name>` isn't a setting: it copies that template's tools and shell over the host's, after saying which of the host's tools that drops (they stay installed; `tool select` uninstalls) and, on a terminal, asking. `host edit` opens the file in your editor (see "The editor" below) and validates it when you close it. `host show <name>` prints the configuration as nimble applies it: the file's settings and the defaults it leaves out (`mode: managed`, `user: debian`, the first domain, `harden: full`; on a workstation no admin user, domain or hardening), each value not from the file marked `# default`; the file's leading comments are kept. `host remove` deletes the file; the host itself is not touched.
 
 ### Templates
 
@@ -113,14 +113,17 @@ services:
 | `shell` | `zsh`, `bash` | none: the login shell stays as it is |
 | `tools` | names from the tool catalog | none: nothing is installed |
 
+A template is copied, never referenced: `host create` and `host set <host> template=<name>` write its `tools` and `shell` into the host file, which holds them from then on. Changing or removing a template changes no machine; to take a changed template over, copy it in again. A template with `os: macos` can't be copied into a managed (Debian) host.
+
 How a machine's setup is resolved:
 
-1. The template is the host file's `template`, else `defaultTemplate`. A machine without a host file uses `defaultTemplate`.
-2. If the template has an `os` and it isn't this machine's, apply stops.
-3. The tools are the template's tools plus the host file's `tools`, without duplicates.
-4. The login shell is the host file's `shell`, else the template's; with neither, it stays as it is.
+1. With a host file: its `tools` and its `shell` — nothing else.
+2. Without a host file: the `defaultTemplate`'s tools and shell. If that template has an `os` and it isn't this machine's, apply stops.
+3. No shell: the login shell stays as it is.
 
-`template create <name>` (`--from`, `--tools`, `--shell`, `--os`, `--description`, `--edit`), `set`, `edit`, `default <name>` and `remove` manage them. A template can't be removed while it is the default or a machine uses it. The skeleton ships `base` (no tools) as the default and `dev` (starship, node, go, python).
+`template create <name>` (`--from`, `--tools`, `--shell`, `--os`, `--description`, `--edit`), `set`, `edit`, `default <name>` and `remove` manage them. The default template can't be removed. The skeleton ships `base` (no tools) as the default and `dev` (starship, node, go, python).
+
+**From an older config repo.** Before `format: 2` in `nimble.yaml`, a host file named its template (or, without a `template:` line, got the default template), and a template change reached every machine using it. The first command on the workstation copies the templates in, once: a managed host's or workstation's `tools` become its template's followed by its own, its `shell` its own else the template's, the `template:` line goes (on a host reached over ssh only it just goes), `nimble.yaml` gets `format: 2`, and it is all one commit. Hosts get the rewritten file with their next `nimble update <host>`. A `template:` line in a host file afterwards is an error that says how to copy the template in.
 
 ### The editor
 
@@ -136,13 +139,13 @@ How a machine's setup is resolved:
 
 1. **Checks.** Load and validate the config; stop on any problem. Stop on a system other than macOS or Debian (Debian means `/etc/debian_version` exists), and on Debian when run as root.
 2. **This machine's host file.** The name comes from `--as` (remembered in `cache/host`), else the remembered name, else the machine name (`scutil --get LocalHostName` on macOS, the hostname elsewhere; lowercased, up to the first dot). Without a host file the default template applies.
-3. **Resolve** template, tools and login shell (see [Templates](#templates)).
+3. **Resolve** tools and login shell: the host file's (see [Templates](#templates)).
 4. **Debian:** install `git` and `ca-certificates` if missing.
 5. **Dotfiles:** write `~/.zshenv`, `~/.zprofile`, `~/.zshrc`, `~/.bashrc`, `~/.profile` (see [Shell](#shell)).
 6. **Links** from `nimble.yaml` and `personal/nimble.yaml`.
 7. **ssh config** for the hosts, on a workstation only.
 8. **`~/.gitconfig`:** created with a comment if missing; a note if it repeats a `[user]` section.
-9. **Login shell** set to what the template or host file asks for.
+9. **Login shell** set to what the host file asks for.
 10. **Tools:** on a workstation first the ssh for the hardware keys (see [The ssh client](#the-ssh-client)); then install the resolved tools; with `--upgrade`, then update the ones that stay current (see [Tools](#tools)). `--no-tools` skips this step. A tool that fails to install is reported, the rest still runs, and apply ends with an error.
 11. **Last:** on macOS, point iTerm2 at its settings in the repo; with `NIMBLE_SRC` set (and Go installed), rebuild nimble from its source.
 
@@ -260,8 +263,8 @@ The tool catalog is built into nimble; `nimble tool list` shows it with ✓ (wan
 - **Install** runs on every apply and installs what is missing. Tools install in catalog order; `firebase` pulls in `node`. One tool failing is reported and the others still install; the updates and the later steps still run, and apply ends with an error. On a host, hardening and the services run regardless.
 - **Update** runs with `apply --upgrade`, i.e. on `nimble update`. Tools that aren't installed are skipped; a failure is a warning.
 - **Vendor apt repositories** get their key in `/etc/apt/keyrings/<name>.gpg` and a list in `/etc/apt/sources.list.d/<name>.list`. For repositories with a Debian codename, nimble uses this release's codename, or the newest older Debian release (trixie, bookworm) the vendor serves. If `apt-get update` fails after adding a list, the list is removed again.
-- **`tool select [--host h]`** picks a machine's tools on a terminal: the catalog for its system (`iterm2`, macOS only, is offered only for a Mac; `--host` means a Debian host), with what the machine already has checked and marked `(template <name>)` or `(host file)`. Newly checked tools are installed and added to the host file's `tools`. Unchecked tools of the host file are taken out of it and uninstalled where nimble installed them — through Homebrew, apt or npm, or as its own release binaries (`gh`, `azure`, `gcloud`, `docker`, `firebase`, `iterm2`, `lima`, `task`); the language toolchains, starship and Claude Code stay installed and nimble only stops managing them. Before anything is removed nimble warns, tool by tool, what gets uninstalled and what it only stops managing, and asks (default no). A tool from the template stays: change the template instead. Everything is one host-file change and one commit; with `--host` the host's own changes are read back first, the change is recorded on the workstation, the host is updated right away (the full `nimble update <host>`) and the removed tools are uninstalled there. On a host itself, it changes the host's own file (see "Changes made on a host"). Without a terminal, `nimble host set <host> tools=a,b,c` changes the list.
-- **`tool shell [zsh|bash|default] [--host h]`** sets a machine's login shell: named, or picked from a list with the host file's setting marked `(current)`. `default` takes `shell` out of the host file, so the template's shell applies, else the system's (the list says which). It is one host-file change and one commit; on this machine the configs and the login shell are applied right away (`apply` without tools: the zsh dotfiles follow the shell), with `--host` the host's own changes are read back first and the host is updated (the full `nimble update <host>`). On a host itself, it changes the host's own file (see "Changes made on a host"). `nimble host set <host> shell=bash` does the same without applying.
+- **`tool select [--host h]`** picks a machine's tools on a terminal: the catalog for its system (`iterm2`, macOS only, is offered only for a Mac; `--host` means a Debian host), with the host file's tools checked. Newly checked tools are installed and added to the host file's `tools`. Unchecked tools of the host file are taken out of it and uninstalled where nimble installed them — through Homebrew, apt or npm, or as its own release binaries (`gh`, `azure`, `gcloud`, `docker`, `firebase`, `iterm2`, `lima`, `task`); the language toolchains, starship and Claude Code stay installed and nimble only stops managing them. Before anything is removed nimble warns, tool by tool, what gets uninstalled and what it only stops managing, and asks (default no). Everything is one host-file change and one commit; with `--host` the host's own changes are read back first, the change is recorded on the workstation, the host is updated right away (the full `nimble update <host>`) and the removed tools are uninstalled there. On a host itself, it changes the host's own file (see "Changes made on a host"). Without a terminal, `nimble host set <host> tools=a,b,c` changes the list.
+- **`tool shell [zsh|bash|default] [--host h]`** sets a machine's login shell: named, or picked from a list with the host file's setting marked `(current)`. `default` takes `shell` out of the host file: the system's login shell (on Debian, back to `/bin/bash` if nimble had set zsh). It is one host-file change and one commit; on this machine the configs and the login shell are applied right away (`apply` without tools: the zsh dotfiles follow the shell), with `--host` the host's own changes are read back first and the host is updated (the full `nimble update <host>`). On a host itself, it changes the host's own file (see "Changes made on a host"). `nimble host set <host> shell=bash` does the same without applying.
 
 ## Pinned languages
 
@@ -359,10 +362,10 @@ nimble for the host is built from `$NIMBLE_SRC` when that is set (a checkout of 
 
 A host gets only what it needs, never the repo:
 
-- `hosts/<host>.yaml`, its template, `toolchain/pins.yaml`, `shell/`, `personal/shell/` if present
+- `hosts/<host>.yaml` (with its tools and shell: no template), `toolchain/pins.yaml`, `shell/`, `personal/shell/` if present
 - the public keys its domain trusts
 - the sources of the links that apply to Debian
-- a reduced `nimble.yaml` (its template as the default, only its own domain, the shared links) and, if there are personal links for Debian, `personal/nimble.yaml`
+- a reduced `nimble.yaml` (no default template, only its own domain, the shared links) and, if there are personal links for Debian, `personal/nimble.yaml`
 - `.sent/hosts/<host>.yaml`: the host file once more, as sent — the base for merging the host's own changes back
 - `.snapshot`: `host`, `commit` (the short commit, plus "+ uncommitted changes" when the checkout had any) and `date` — nothing about the workstation
 
@@ -433,12 +436,15 @@ The `sudo` level checks only the admin's sudo rights (no NOPASSWD), PAM and the 
 | YubiKey backup | a YubiKey with a resident key | PIN and touch | every managed host |
 
 - **`nimble key enclave [domain]`** (macOS): creates the domain's daily key in the Secure Enclave (`sc_auth create-ctk-identity -k p-256-ne -t bio`) if this Mac has none, exports its key handle to `~/.ssh/id_ecdsa_sk_rk_<label>` (and `.pub`), writes `keys/enclave/<machine>-<label>.pub` and commits. Private keys never leave the hardware; the handle only lets ssh find the key. nimble identifies a key by its fingerprint, since labels aren't unique in the Secure Enclave.
-- **Renewing the daily key.** A Secure Enclave key is valid for a year. When it is invalid or expires within 30 days, `nimble key enclave` creates a new key next to it (labelled `<label>-<date>`), keeps the old handle as `~/.ssh/id_ecdsa_sk_rk_<label>.old`, and puts the new public key into `keys/`. ssh offers both keys, so every host stays reachable while `nimble update all` rolls the new one out. After that, `nimble key enclave --drop-old` removes the old key from the Mac for good.
+- **Renewing the daily key.** A Secure Enclave key is valid for a year. When it is invalid or expires within 30 days — or any time with `--renew` — `nimble key enclave` creates a new key next to it (labelled `<label>-<date>`) and hands over to it (see the next point). The new key is the primary one at once: its handle is `~/.ssh/id_ecdsa_sk_rk_<label>` and it replaces the old public key in `keys/`. The old handle is kept as `~/.ssh/id_ecdsa_sk_rk_<label>.old`, and ssh offers it after the new one. A renewal is refused while an earlier handover of the same key is still running.
+- **The handover.** A renewal keeps the old key usable on this workstation for the handover time: `--handover` (`14d` by default; `7d`, `2w`, `36h`), and for a daily key never past the old key's expiry. A host trusts the new key from its next `nimble update` and stops trusting the old one then, so until every host is updated the old key is what reaches the rest. nimble notes each host whose `nimble update <host>` or `nimble init <host>` succeeded, since its keys were synced, in `cache/handover.yaml`. That record belongs to this workstation and is never committed, so updates run from another workstation don't count. A handover is complete once every managed host that trusts the key has been updated: for a daily key, the managed hosts of the domains with its label; for a backup, every managed host. Hosts in `mode: ssh` have their keys managed by hand and don't count. At the end of every `nimble update` run on hosts, nimble looks at the handovers. A complete daily-key handover ends there: the old key is deleted from the Secure Enclave and its handle removed, without asking. A complete YubiKey handover is announced, because only the YubiKey itself can drop the old key. A handover past its deadline with hosts still waiting is a warning that names them; nothing is removed on its own then. `nimble key list` and `nimble status` show every handover in progress.
+- **Ending a handover early: `--drop-old`.** `nimble key enclave --drop-old` removes the old daily key now. If hosts are still waiting, it names them (afterwards only a YubiKey reaches them) and asks, default no. `nimble key yubikey --drop-old <name>` deletes the old key from the YubiKey, plugged in alone. It asks the same question, checks the YubiKey is `<name>`, and deletes every nimble credential on it except the registered one (`ykman fido credentials delete`).
 - **`nimble key yubikey [name]`** sets up and registers YubiKeys, one after another, each plugged in alone. A new YubiKey gets its FIDO2 PIN first (`ykman fido access change-pin`). Then nimble creates a resident key on it (`ssh-keygen -t ed25519-sk -O resident -O verify-required -O application=ssh:nimble-backup`: PIN and touch for every use), writes `keys/yubikey/<name>.pub` (one key per file) and commits. A YubiKey that already carries a nimble key is registered with that key, not overwritten. It uses ykman and the workstation's ssh (see [The ssh client](#the-ssh-client)).
-- **Reaching the hosts with a YubiKey: `--yubikey`.** On a new workstation, or when the daily key is lost or expired, add `--yubikey` to a command (`nimble update all --yubikey`). nimble reads the key's handle from the plugged-in YubiKey (asking for its PIN), checks that it is a registered backup, and runs every ssh of that command with that key. ssh asks for the PIN and a touch for each host; sudo there asks for the admin's password, because the forwarded agent holds no trusted key. The generated ssh config itself offers only the daily key.
-- **`nimble key remove <name>`** deletes the public key and commits. It refuses to remove the last key a domain trusts.
+- **Renewing a YubiKey: `nimble key yubikey --renew <name> [--handover 30d]`.** The registered YubiKey `<name>`, plugged in alone, gets a new resident key next to its old one. The new key uses an application of its own, `ssh:nimble-backup-<date>-<time>`, so it doesn't replace the old credential. Its public key replaces `keys/yubikey/<name>.pub`, and the handover starts. nimble first checks that the plugged-in YubiKey is `<name>`. When every host has the new key, `--drop-old <name>` deletes the old key from it.
+- **Reaching the hosts with a YubiKey: `--yubikey`.** On a new workstation, or when the daily key is lost or expired, add `--yubikey` to a command (`nimble update all --yubikey`). nimble reads the handles of the nimble keys from the plugged-in YubiKey (asking for its PIN), checks that one is a registered backup, and runs every ssh of that command with them: the registered key first, then any older one it still carries during a handover, since hosts not updated yet trust only that. ssh asks for the PIN and a touch for each host; sudo there asks for the admin's password, because the forwarded agent holds no trusted key. The generated ssh config itself offers only the daily key.
+- **`nimble key remove <name>`** deletes the public key, forgets a handover of it, and commits. It refuses to remove the last key a domain trusts.
 - **Which keys a host trusts**: every YubiKey, plus every daily key (from any workstation) whose label equals its domain's label. `nimble update all` rolls key changes out to the hosts' `authorized_keys` and sudo key files (on `harden: sudo` hosts, the sudo key file only).
-- **`nimble key list`** shows the keys per domain, the YubiKey backups and this Mac's Secure Enclave keys with their validity.
+- **`nimble key list`** shows the keys per domain, the YubiKey backups, this Mac's Secure Enclave keys with their validity, and the handovers in progress with the hosts still waiting.
 - **Domains**: `nimble domain create <name> [--label L]` adds one (the label defaults to the name, with `_` for `-`: a label has no `-`, because it ends the file name `keys/enclave/<machine>-<label>.pub`). Domains that share a label trust the same daily keys; a label of its own separates them.
 
 ## Services: the Claude Code server
@@ -459,7 +465,7 @@ A service change is committed to the host file only once it worked on the host; 
 
 Both take host names or `all`; they then run on the hosts over SSH.
 
-**`nimble status`**: this machine (system, host file, template, config: branch, commit, uncommitted changes and sync with GitHub as of the last fetch, or the snapshot and whether the host file was changed there), the login shell against the template, each tool against what is wanted (for the languages: the installed default against the pin), on Debian the pam_rssh version, on a host each service of its host file (installed, enabled and running as the host file says — otherwise what to run), and the lines other tools added to the dotfiles. It exits with 1 when something differs.
+**`nimble status`**: this machine (system, host file — or, without one, the default template —, config: branch, commit, uncommitted changes and sync with GitHub as of the last fetch, or the snapshot and whether the host file was changed there), the login shell against the template, each tool against what is wanted (for the languages: the installed default against the pin), on Debian the pam_rssh version, on a host each service of its host file (installed, enabled and running as the host file says — otherwise what to run), and the lines other tools added to the dotfiles. It exits with 1 when something differs.
 
 **`nimble doctor`**: the YAML is valid; the dotfiles are managed by nimble (zsh's only where zsh is); the zsh launcher works; every link is in place; the git identity. On a Mac: the daily key per label (present, valid, not expiring within 30 days, handle in `~/.ssh`), the YubiKey backups, Touch ID for sudo (and iTerm2's setting that hides the Touch ID prompt), the ssh config include, a trusted key in the SSH agent. On Debian: the hardening files, the sudo group (the admin and `sudoAllowed` accounts), root lock, the forwarded agent, and the audit.
 
@@ -495,7 +501,8 @@ Both take host names or `all`; they then run on the hosts over SSH.
 | links from `nimble.yaml` | all | config files linked from the repo |
 | `~/.nimble/cache/host` | hosts | this machine's name in `hosts/` (from `--as`) |
 | `~/.nimble/cache/ssh_config`, the include in `~/.ssh/config` | workstation | ssh config for the hosts |
-| `~/.ssh/id_ecdsa_sk_rk_<label>`, `.pub` (after a renewal also `.old`, `.old.pub`) | Mac | handles of the Secure Enclave keys |
+| `~/.ssh/id_ecdsa_sk_rk_<label>`, `.pub` (during a handover also `.old`, `.old.pub`) | Mac | handles of the Secure Enclave keys |
+| `~/.nimble/cache/handover.yaml` | workstation | key renewals in progress: old key, deadline, hosts updated since |
 | `~/.gitconfig` | all | created empty (with a comment) if missing |
 | `/etc/shells` | when the login shell changes | the new shell is added |
 | `~/.nimble/backup/<timestamp>/` | all | files nimble replaced |

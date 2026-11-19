@@ -39,7 +39,7 @@ func NewCmdInit() *cobra.Command {
 			  3. send nimble and the host's config snapshot (only what it needs)
 			  4. harden: root cannot log in at all, SSH keys only, only the admin user may
 			     sudo, confirmed with a hardware key (asks for the password this once)
-			  5. apply the host's template: login shell, tools
+			  5. apply the host file: login shell, tools
 			  6. check sudo with the hardware key
 		`),
 		Example: heredoc.Doc(`
@@ -157,6 +157,8 @@ func InitHost(name string) error {
 	if err := hosts.Run(name, hosts.Opts{Fresh: true, Agent: true}, setupCmd); err != nil {
 		return err
 	}
+	update.KeysSynced(name)
+	update.FinishHandovers()
 
 	nimble.Step("check sudo with the hardware key")
 	return hosts.Run(name, hosts.Opts{Fresh: true, Agent: true}, `sudo -k; sudo -v && echo "sudo with the hardware key: ok"`)
