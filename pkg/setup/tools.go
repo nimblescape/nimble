@@ -69,9 +69,9 @@ var Catalog = []Tool{
 		Install: either(brewCask("gcloud-cli"), aptRepo("google-cloud-cli", "https://packages.cloud.google.com/apt/doc/apt-key.gpg", true,
 			"https://packages.cloud.google.com/apt cloud-sdk main", "google-cloud-cli")),
 		Remove: either0(brewRemove("gcloud-cli", true), aptRemove("google-cloud-cli")), Update: updateWith(func() error { return brewUpgrade("gcloud-cli", true) }, func() error { return aptUpgrade("google-cloud-cli") })},
-	{Name: "docker", Desc: "Docker (Docker Desktop on macOS, Docker Engine + compose on Debian)", Short: "Docker", Installed: has("docker"),
-		Install: either(brewCask("docker-desktop"), aptRepo("docker", "https://download.docker.com/linux/debian/gpg", true,
-			"https://download.docker.com/linux/debian {codename} stable",
+	{Name: "docker", Desc: "Docker (Docker Desktop on macOS, Docker Engine + compose on Debian and Ubuntu)", Short: "Docker", Installed: has("docker"),
+		Install: either(brewCask("docker-desktop"), aptRepo("docker", "https://download.docker.com/linux/{distro}/gpg", true,
+			"https://download.docker.com/linux/{distro} {codename} stable",
 			"docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin")),
 		Remove: either0(brewRemove("docker-desktop", true), aptRemove("docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin")), Update: updateWith(func() error { return nil /* Docker Desktop updates itself */ }, func() error {
 			return aptUpgrade("docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin")
@@ -312,9 +312,13 @@ func brewRemove(name string, cask bool) func() error {
 
 // --- apt (Debian) -----------------------------------------------------------------------
 
-// aptRepo installs packages from a vendor's apt repository ({codename} = Debian release).
+// aptRepo installs packages from a vendor's apt repository. In the key URL and the repo,
+// {distro} is this system's ID (debian, ubuntu) and {codename} its release (trixie, noble).
 func aptRepo(name, keyURL string, dearmor bool, repo string, pkgs ...string) func(*config.Pins) error {
 	return func(*config.Pins) error {
+		distro, _ := nimble.Distro()
+		keyURL = strings.ReplaceAll(keyURL, "{distro}", distro)
+		repo = strings.ReplaceAll(repo, "{distro}", distro)
 		missing := false
 		for _, p := range pkgs {
 			if !nimble.DebInstalled(p) {
@@ -373,35 +377,43 @@ func aptRepo(name, keyURL string, dearmor bool, repo string, pkgs ...string) fun
 	}
 }
 
-// debianReleases lists Debian's codenames, newest first.
-var debianReleases = []string{"forky", "trixie", "bookworm"}
+// distroReleases lists the codenames of each distribution nimble supports, newest first —
+// the fallbacks for a vendor repo that has no build for this release yet. A release newer
+// than these lists falls back to all of them.
+var distroReleases = map[string][]string{
+	"debian": {"forky", "trixie", "bookworm"},
+	"ubuntu": {"stonking", "resolute", "questing", "plucky", "oracular", "noble"},
+}
 
-// vendorCodename picks the Debian codename for a vendor repo ("<url> {codename} <component>"):
-// this system's, or — when the vendor has no build for it yet — the newest older release
-// it has, which is what vendors recommend until they catch up.
-func vendorCodename(repo string) (string, error) {
-	codename := ""
-	for _, l := range nimble.Lines(nimble.ReadTrim("/etc/os-release")) {
-		if v, ok := strings.CutPrefix(l, "VERSION_CODENAME="); ok {
-			codename = strings.Trim(v, `"`)
-		}
-	}
-	base := strings.TrimSuffix(strings.Fields(repo)[0], "/") + "/dists/"
-	candidates := []string{codename}
-	for i, c := range debianReleases {
+// codenameCandidates is the order to try a vendor repo's suites in: this release, then the
+// older ones of its distribution, newest first (every known one for a release newer than
+// the list).
+func codenameCandidates(distro, codename string) []string {
+	known := distroReleases[distro]
+	out := []string{codename}
+	for i, c := range known {
 		if c == codename {
-			candidates = append(candidates, debianReleases[i+1:]...)
+			return append(out, known[i+1:]...)
 		}
 	}
-	for _, c := range candidates {
+	return append(out, known...)
+}
+
+// vendorCodename picks the codename for a vendor repo ("<url> {codename} <component>"):
+// this system's, or — when the vendor has no build for it yet — the newest older release
+// of the same distribution it has, which is what vendors recommend until they catch up.
+func vendorCodename(repo string) (string, error) {
+	distro, codename := nimble.Distro()
+	base := strings.TrimSuffix(strings.Fields(repo)[0], "/") + "/dists/"
+	for _, c := range codenameCandidates(distro, codename) {
 		if nimble.URLExists(base+c+"/Release") || nimble.URLExists(base+c+"/InRelease") {
 			if c != codename {
-				nimble.Warn(fmt.Sprintf("%s has no packages for Debian %s yet — using %s's", base, codename, c))
+				nimble.Warn(fmt.Sprintf("%s has no packages for %s yet — using %s's", base, nimble.DistroName(), c))
 			}
 			return c, nil
 		}
 	}
-	return "", fmt.Errorf("%s has no packages for Debian %s", base, codename)
+	return "", fmt.Errorf("%s has no packages for %s", base, nimble.DistroName())
 }
 
 func aptRemove(pkgs ...string) func() error {

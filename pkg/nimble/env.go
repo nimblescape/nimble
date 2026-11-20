@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // StubMark starts every dotfile nimble manages (~/.zshenv, ~/.zprofile, ~/.zshrc, ~/.bashrc,
@@ -172,15 +174,10 @@ func Exists(path string) bool {
 	return err == nil
 }
 
-// IsTerminal reports whether f is an interactive terminal.
-func IsTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return false // a pipe or a file
-	}
-	null, err := os.Stat(os.DevNull)
-	return err != nil || !os.SameFile(fi, null) // /dev/null is a character device too
-}
+// IsTerminal reports whether f is an interactive terminal: the terminal driver answers for
+// it. Being a character device isn't enough — /dev/null is one too, and under docker exec
+// or a service manager stdin can be another system's null device.
+func IsTerminal(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
 
 // Field returns the n-th whitespace-separated field of s ("" if missing).
 func Field(s string, n int) string {
@@ -256,8 +253,45 @@ func OSName() string {
 	return "Linux"
 }
 
-// IsDebian reports whether this is a Debian (or Debian-based) host.
+// IsDebian reports whether this is a Debian-family system: Debian or Ubuntu (both have
+// /etc/debian_version). nimble's os "debian" means this family.
 func IsDebian() bool { return runtime.GOOS == "linux" && Exists("/etc/debian_version") }
+
+// Distro is this system's ID and release codename from /etc/os-release: "debian" and
+// "trixie", "ubuntu" and "noble" ("" where it doesn't say).
+func Distro() (id, codename string) {
+	return ParseOSRelease(ReadTrim("/etc/os-release"))
+}
+
+// ParseOSRelease reads ID and VERSION_CODENAME from an os-release file's text.
+func ParseOSRelease(text string) (id, codename string) {
+	for _, l := range Lines(text) {
+		k, v, ok := strings.Cut(l, "=")
+		if !ok {
+			continue
+		}
+		v = strings.Trim(v, `"'`)
+		switch k {
+		case "ID":
+			id = v
+		case "VERSION_CODENAME":
+			codename = v
+		}
+	}
+	return id, codename
+}
+
+// DistroName is the system's name for messages: "Debian trixie", "Ubuntu noble".
+func DistroName() string {
+	id, codename := Distro()
+	switch id {
+	case "debian":
+		id = "Debian"
+	case "ubuntu":
+		id = "Ubuntu"
+	}
+	return strings.TrimSpace(id + " " + codename)
+}
 
 // LoginShell is the user's login shell from the user database.
 func LoginShell() string {

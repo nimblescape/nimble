@@ -167,6 +167,10 @@ func InitHost(name string) error {
 // create makes a new config repo in ~/.nimble from the skeleton, commits it and offers to
 // publish it as a private GitHub repo.
 func create() error {
+	// the first commit needs who you are: say so before anything is asked or written
+	if nimble.Output("git", "config", "user.name") == "" || nimble.Output("git", "config", "user.email") == "" {
+		return errors.New(`git doesn't know who you are yet, and the new config repo is committed in your name — first: git config --global user.name "Your Name" && git config --global user.email you@example.com`)
+	}
 	dir := nimble.Repo()
 	domain := "default"
 	if nimble.Interactive() {

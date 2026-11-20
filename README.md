@@ -1,6 +1,6 @@
 # nimble
 
-nimble sets up a developer workstation (macOS or Debian) and the Debian hosts it reaches over SSH, and keeps them identical: the shell and prompt, linked config files, pinned language versions, tools, SSH keys, host hardening and services. Everything is described in a Git config repo of your own, checked out at `~/.nimble` on the workstation; hosts get a snapshot of just what they need. Private keys never leave their hardware, and nothing is installed unless a template asks for it.
+nimble sets up a developer workstation (macOS, Debian or Ubuntu) and the Debian and Ubuntu hosts it reaches over SSH, and keeps them identical: the shell and prompt, linked config files, pinned language versions, tools, SSH keys, host hardening and services. Everything is described in a Git config repo of your own, checked out at `~/.nimble` on the workstation; hosts get a snapshot of just what they need. Private keys never leave their hardware, and nothing is installed unless a template asks for it.
 
 How it all works in detail: [docs/how-it-works.md](docs/how-it-works.md).
 
@@ -78,7 +78,7 @@ Keep the config repo private and in your own account; one in an organization's a
 
 ## Requirements
 
-A Mac or a Debian machine as the workstation, with `git`, and `gh` logged in for GitHub (on a Mac also Homebrew). Hosts run Debian 12 or newer; Ubuntu 24.04 or newer works too. A Mac with Touch ID, or a YubiKey, confirms SSH logins and sudo on the hosts.
+A Mac, or a machine with Debian 13 (trixie) or newer or Ubuntu 24.04 or newer, as the workstation, with `gh` logged in for GitHub (on a Mac also Homebrew; nimble installs `git`). Hosts run Debian 13 or newer, or Ubuntu 24.04 or newer — LTS and interim releases while Canonical supports them. Every supported release, new ones included, is tested weekly. A Mac with Touch ID, or a YubiKey, confirms SSH logins and sudo on the hosts.
 
 ## Development
 
@@ -92,7 +92,11 @@ go test ./... && go build -o ~/.local/bin/nimble .
 test/host.sh
 ```
 
-`test/host.sh` sets a host up in Debian and Ubuntu containers and checks the hardening, sudo with the shipped pam_rssh module and the commands that run under sudo (needs Docker). The pam_rssh modules in `pkg/harden/module/` come from `build/pam_rssh/`.
+```bash
+test/workstation.sh
+```
+
+`test/host.sh` sets a host up in Debian and Ubuntu containers and checks the hardening, sudo with the shipped pam_rssh module and the commands that run under sudo. `test/workstation.sh` makes a Debian or Ubuntu container the first workstation (`init --new`, `host create`, the ssh config) and hardens it. Both need Docker and default to the oldest supported releases; pass images to test others (`test/images.sh` lists every supported release). The pam_rssh modules in `pkg/harden/module/` come from `build/pam_rssh/`.
 
 With `export NIMBLE_SRC="$HOME/<path to this checkout>"` in `~/.nimble/local.sh`, `nimble upgrade` and every `nimble update` rebuild nimble from the checkout, and hosts get a Linux build of it instead of the release. Tagging `vX.Y.Z` builds the release (macOS and Linux binaries, Debian packages, checksums) with GoReleaser.
 

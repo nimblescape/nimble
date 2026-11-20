@@ -46,7 +46,7 @@ func Run(userName, as string) error {
 		return errors.New("needs root: sudo nimble harden")
 	}
 	if !nimble.IsDebian() {
-		return errors.New("not a Debian host")
+		return errors.New("not a Debian or Ubuntu host")
 	}
 	u, err := user.Lookup(userName)
 	if err != nil {
@@ -307,6 +307,47 @@ func userPath(path string, data []byte, perm os.FileMode, uid, gid int) error {
 	return f.Chown(uid, gid)
 }
 
+// pamLoads makes sure the module loads: it needs libpam, a glibc as new as Debian 12's and
+// OpenSSL 3. A release that moved on to a newer OpenSSL (Ubuntu 26.10: OpenSSL 4) still
+// packages OpenSSL 3; that package is installed then, and the distribution keeps it patched.
+func pamLoads(module string) error {
+	missing := lddMissing(module)
+	if needsOpenSSL3(missing) {
+		nimble.Say("OpenSSL 3 for pam_rssh: this release's own OpenSSL is newer")
+		if _, err := nimble.AptInstall("libssl3t64"); err != nil {
+			if _, err2 := nimble.AptInstall("libssl3"); err2 != nil {
+				return fmt.Errorf("pam_rssh needs OpenSSL 3, and this release has no package for it: %v; %v", err, err2)
+			}
+		}
+		missing = lddMissing(module)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("pam_rssh can't load on this system (nimble supports Debian 13 or newer and Ubuntu 24.04 or newer): %s", strings.Join(missing, "; "))
+	}
+	return nil
+}
+
+// lddMissing lists the libraries a shared object needs that the system doesn't have.
+func lddMissing(so string) []string {
+	var missing []string
+	for _, l := range nimble.Lines(nimble.OutputC("ldd", so)) {
+		if strings.Contains(l, "not found") {
+			missing = append(missing, strings.TrimSpace(l))
+		}
+	}
+	return missing
+}
+
+// needsOpenSSL3 reports whether OpenSSL 3's libraries are among the missing ones.
+func needsOpenSSL3(missing []string) bool {
+	for _, m := range missing {
+		if strings.HasPrefix(m, "libssl.so.3 ") || strings.HasPrefix(m, "libcrypto.so.3 ") {
+			return true
+		}
+	}
+	return false
+}
+
 // pamRssh installs the pam_rssh module this nimble ships (module.go): nothing is built
 // or downloaded on the host.
 func pamRssh() error {
@@ -331,16 +372,10 @@ func pamRssh() error {
 		if err := replaceFile(module, pamModule, 0o644); err != nil {
 			return err
 		}
-		// it has to load: libssl 3, libpam and a glibc as new as Debian 12's
-		var missing []string
-		for _, l := range nimble.Lines(nimble.OutputC("ldd", module)) {
-			if strings.Contains(l, "not found") {
-				missing = append(missing, strings.TrimSpace(l))
-			}
-		}
-		if len(missing) > 0 {
-			return fmt.Errorf("pam_rssh can't load on this system (nimble's build needs Debian 12 or newer, or Ubuntu 24.04 or newer): %s", strings.Join(missing, "; "))
-		}
+	}
+	// every run: a release upgrade can take a library away
+	if err := pamLoads(module); err != nil {
+		return err
 	}
 	if nimble.ReadTrim(pamMarker)+"\n" == marker {
 		return nil
