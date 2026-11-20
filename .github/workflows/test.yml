@@ -1,7 +1,7 @@
 name: Test
 
 # Every push and pull request: the unit tests, and on the oldest supported releases
-# (Debian 13, Ubuntu 24.04) the host test — a host set up and hardened in a container the
+# (Debian 12, Ubuntu 24.04) the host test — a host set up and hardened in a container the
 # way a workstation does it (test/host.sh) — and the workstation test — a Debian or Ubuntu
 # machine made the first workstation (test/workstation.sh). The newer releases, new ones
 # included, run weekly (distros.yml).
@@ -34,7 +34,7 @@ jobs:
       fail-fast: false
       matrix:
         test: [host, workstation]
-        image: ["debian:13", "ubuntu:24.04"]
+        image: ["debian:12", "ubuntu:24.04"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6

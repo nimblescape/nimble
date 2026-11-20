@@ -78,7 +78,7 @@ Keep the config repo private and in your own account; one in an organization's a
 
 ## Requirements
 
-A Mac, or a machine with Debian 13 (trixie) or newer or Ubuntu 24.04 or newer, as the workstation, with `gh` logged in for GitHub (on a Mac also Homebrew; nimble installs `git`). Hosts run Debian 13 or newer, or Ubuntu 24.04 or newer — LTS and interim releases while Canonical supports them. Every supported release, new ones included, is tested weekly. A Mac with Touch ID, or a YubiKey, confirms SSH logins and sudo on the hosts.
+A Mac, or a machine with Debian 12 (bookworm) or newer or Ubuntu 24.04 or newer, as the workstation, with `gh` logged in for GitHub (on a Mac also Homebrew; nimble installs `git`). Hosts run Debian 12 or newer, or Ubuntu 24.04 or newer — LTS and interim releases while Canonical supports them. Every supported release, new ones included, is tested weekly. A Mac with Touch ID, or a YubiKey, confirms SSH logins and sudo on the hosts.
 
 ## Development
 

@@ -322,7 +322,7 @@ func pamLoads(module string) error {
 		missing = lddMissing(module)
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("pam_rssh can't load on this system (nimble supports Debian 13 or newer and Ubuntu 24.04 or newer): %s", strings.Join(missing, "; "))
+		return fmt.Errorf("pam_rssh can't load on this system (nimble supports Debian 12 or newer and Ubuntu 24.04 or newer): %s", strings.Join(missing, "; "))
 	}
 	return nil
 }

@@ -5,14 +5,14 @@
 # through an SSH agent, the password as fallback), the audit, and the commands that run
 # under sudo.
 #
-#   test/host.sh [image…]      default: debian:13 ubuntu:24.04 (test/images.sh lists them all)
+#   test/host.sh [image…]      default: debian:12 ubuntu:24.04 (test/images.sh lists them all)
 #   PLATFORM=linux/amd64 test/host.sh ubuntu:26.04     another CPU (emulated)
 #
 # Needs Docker and Go. A software key stands in for the hardware key.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 images=("$@")
-[ ${#images[@]} -gt 0 ] || images=(debian:13 ubuntu:24.04)
+[ ${#images[@]} -gt 0 ] || images=(debian:12 ubuntu:24.04)
 name=""
 work=$(mktemp -d)
 # KEEP=1 leaves the container of a failed run for a look inside (docker exec -it <name> bash)

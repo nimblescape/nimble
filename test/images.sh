@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The Debian and Ubuntu releases nimble supports, as Docker images, found anew on every run:
-# every Debian release from 13 (trixie) on that Docker Hub has, and every Ubuntu release
+# every Debian release from 12 (bookworm) on that Docker Hub has, and every Ubuntu release
 # from 24.04 on that Canonical still supports (LTS and interim). A new release — Debian 14,
 # Ubuntu 26.04 or 26.10 — is picked up the week its image appears; point releases come with
 # the image (each run pulls it fresh).
@@ -21,7 +21,7 @@ for a in "$@"; do
   esac
 done
 
-min_debian=13
+min_debian=12
 min_ubuntu=24.04
 
 # hub_has <repo> <tag>: the official image has this tag on Docker Hub
@@ -60,10 +60,11 @@ if $next; then
 fi
 
 if $json; then
+  # ${a[@]+…}: an empty array is "unbound" to set -u in older bash (macOS's 3.2)
   {
     for i in "${stable[@]}"; do jq -cn --arg i "$i" '{image: $i, next: false}'; done
-    for i in "${dev[@]}"; do jq -cn --arg i "$i" '{image: $i, next: true}'; done
+    for i in ${dev[@]+"${dev[@]}"}; do jq -cn --arg i "$i" '{image: $i, next: true}'; done
   } | jq -cs '{include: .}'
 else
-  printf '%s\n' "${stable[@]}" "${dev[@]}"
+  printf '%s\n' "${stable[@]}" ${dev[@]+"${dev[@]}"}
 fi
