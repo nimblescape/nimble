@@ -44,7 +44,7 @@ func Apply(o Options) error {
 		return err
 	}
 	if config.OS() == "" {
-		return errors.New("nimble supports macOS and Debian only")
+		return errors.New("nimble supports macOS, Debian and Ubuntu only")
 	}
 	if errs := config.Validate(KnownTools()); len(errs) > 0 {
 		for _, e := range errs {

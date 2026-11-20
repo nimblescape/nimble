@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Host test: sets a Debian host up the way a workstation does and checks the result, in a
-# throwaway Docker container per system. It runs what the unit tests can't: apply and the
-# full hardening as root, the pam_rssh module nimble ships (sudo confirmed through an SSH
-# agent, the password as fallback), the audit, and the commands that run under sudo.
+# Host test: sets a Debian or Ubuntu host up the way a workstation does and checks the
+# result, in a throwaway Docker container per system. It runs what the unit tests can't:
+# apply and the full hardening as root, the pam_rssh module nimble ships (sudo confirmed
+# through an SSH agent, the password as fallback), the audit, and the commands that run
+# under sudo.
 #
-#   test/host.sh [image…]      default: debian:bookworm debian:trixie ubuntu:24.04
-#   PLATFORM=linux/amd64 test/host.sh debian:bookworm     another CPU (emulated)
+#   test/host.sh [image…]      default: debian:12 ubuntu:24.04 (test/images.sh lists them all)
+#   PLATFORM=linux/amd64 test/host.sh ubuntu:26.04     another CPU (emulated)
 #
 # Needs Docker and Go. A software key stands in for the hardware key.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 images=("$@")
-[ ${#images[@]} -gt 0 ] || images=(debian:bookworm debian:trixie ubuntu:24.04)
+[ ${#images[@]} -gt 0 ] || images=(debian:12 ubuntu:24.04)
 name=""
 work=$(mktemp -d)
 # KEEP=1 leaves the container of a failed run for a look inside (docker exec -it <name> bash)
@@ -40,7 +41,7 @@ fail() { echo "FAIL ($image): $1" >&2; exit 1; }
 ok() { echo "  ok  $1"; }
 
 for image in "${images[@]}"; do
-  name=nimble-host-test-$(printf '%s' "$image" | tr -c 'a-zA-Z0-9' '-')
+  name=nimble-host-test-$(printf '%s-%s' "$image" "$arch" | tr -c 'a-zA-Z0-9' '-')
   echo "=== $image ($platform)"
   docker run -d --rm --platform "$platform" --name "$name" "$image" sleep 3600 >/dev/null
   root 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends sudo openssh-server openssh-client git ca-certificates >/dev/null 2>&1' || fail "apt"
@@ -57,8 +58,10 @@ for image in "${images[@]}"; do
   ok "apply"
   root '/home/debian/.local/bin/nimble harden --user debian --as devbox' >"$work/harden.log" 2>&1 || { cat "$work/harden.log"; fail "harden"; }
   grep -q "All good." "$work/harden.log" || { cat "$work/harden.log"; fail "the audit found problems"; }
-  if grep -q "apt install\|build pam_rssh" "$work/harden.log"; then cat "$work/harden.log"; fail "harden installed or built something"; fi
-  ok "harden: the audit passes, nothing built"
+  # nothing built; the only package harden may install is OpenSSL 3, on a release whose own is newer
+  if grep "apt install\|build pam_rssh" "$work/harden.log" | grep -qv "apt install libssl3"; then cat "$work/harden.log"; fail "harden installed or built something"; fi
+  root 'ldd /usr/lib/*/security/libpam_rssh.so | grep -q "not found"' && fail "pam_rssh doesn't load"
+  ok "harden: the audit passes, nothing built, the module loads"
   root 'test -f /etc/ssh/sshd_config.d/10-nimble.conf && grep -q "^auth sufficient libpam_rssh.so" /etc/pam.d/sudo && ls /usr/lib/*/security/libpam_rssh.so >/dev/null && grep -q "nimble keys" /home/debian/.ssh/authorized_keys && test -f /etc/security/authorized_keys/debian.keys' || fail "a hardening file is missing"
   root 'test "$(cut -d" " -f1 /usr/local/share/pam_rssh.version)" = "'"$(cat pkg/harden/module/VERSION)"'"' || fail "pam_rssh marker"
   root 'id -nG other | grep -qvw sudo' || fail "other is still in group sudo"

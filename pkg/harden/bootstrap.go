@@ -20,7 +20,7 @@ func Bootstrap(userName, keysFile, binary string) error {
 		return errors.New("needs root")
 	}
 	if !nimble.IsDebian() {
-		return errors.New("not a Debian host")
+		return errors.New("not a Debian or Ubuntu host")
 	}
 	if _, err := nimble.AptInstall("sudo"); err != nil {
 		return err

@@ -1,0 +1,80 @@
+name: Distros
+
+# Every week: finds the Debian and Ubuntu releases nimble supports (test/images.sh) — every
+# Debian from 13 on, every supported Ubuntu from 24.04 on, a new release (Debian 14,
+# Ubuntu 26.10 …) from the week its image appears — and runs the host and the workstation
+# test on each, on amd64 and arm64, with the image freshly pulled (point releases come with
+# it). The releases in development (debian:testing, ubuntu:devel) run too, as an early
+# warning: their failures don't fail the run. Any failure opens an issue, or comments on
+# the open one.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays, 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.images.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: images
+        run: |
+          images=$(test/images.sh --next --json)
+          matrix=$(jq -c '{include: [.include[] as $i
+            | ("host", "workstation") as $test
+            | ({amd64: "ubuntu-latest", arm64: "ubuntu-24.04-arm"} | to_entries[]) as $a
+            | $i + {test: $test, arch: $a.key, runner: $a.value}]}' <<<"$images")
+          echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Releases under test"
+            echo
+            jq -r '.include[] | "- `\(.image)`" + (if .next then " (in development: an early warning)" else "" end)' <<<"$images"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  test:
+    needs: discover
+    name: ${{ matrix.test }} ${{ matrix.image }} ${{ matrix.arch }}${{ matrix.next && ' (in development)' || '' }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.next }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - run: test/${{ matrix.test }}.sh "${{ matrix.image }}"
+
+  report:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Open or update the issue for failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          failed=$(gh run view "$GITHUB_RUN_ID" --json jobs -q '.jobs[] | select(.conclusion == "failure") | "- [\(.name)](\(.url))"')
+          if [ -z "$failed" ]; then echo "every release passed"; exit 0; fi
+          title="Distros: the weekly Debian/Ubuntu check failed"
+          # shellcheck disable=SC2016 # the backticks are Markdown
+          body=$(printf 'The [weekly check](%s/%s/actions/runs/%s) failed on:\n\n%s\n\nA release marked "in development" is an early warning; the others are supported releases.\nRun it again: Actions → Distros → Run workflow. Locally: `test/host.sh <image>`, `test/workstation.sh <image>`.' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$failed")
+          issue=$(gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number // empty')
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

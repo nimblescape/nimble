@@ -3,6 +3,7 @@ package setup
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -31,5 +32,25 @@ func TestNodeInstalled(t *testing.T) {
 	}
 	if !nodeInstalled() {
 		t.Error("the pinned Node doesn't count as node")
+	}
+}
+
+// A vendor repo without a build for this release falls back to the older releases of the
+// same distribution; a release newer than nimble knows falls back to all of them.
+func TestCodenameCandidates(t *testing.T) {
+	for _, c := range []struct {
+		distro, codename string
+		want             string
+	}{
+		{"debian", "trixie", "trixie bookworm"},
+		{"debian", "forky", "forky trixie bookworm"},
+		{"debian", "duke", "duke forky trixie bookworm"},
+		{"ubuntu", "noble", "noble"},
+		{"ubuntu", "plucky", "plucky oracular noble"},
+		{"ubuntu", "tenacious", "tenacious stonking resolute questing plucky oracular noble"},
+	} {
+		if got := strings.Join(codenameCandidates(c.distro, c.codename), " "); got != c.want {
+			t.Errorf("%s %s: %q, want %q", c.distro, c.codename, got, c.want)
+		}
 	}
 }

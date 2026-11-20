@@ -79,3 +79,13 @@ func TestRemoveRootKeys(t *testing.T) {
 		t.Fatalf("backup overwritten: %q", b)
 	}
 }
+
+// ldd's lines for a module on a release with OpenSSL 4 only (Ubuntu 26.10).
+func TestNeedsOpenSSL3(t *testing.T) {
+	if !needsOpenSSL3([]string{"libssl.so.3 => not found", "libcrypto.so.3 => not found"}) {
+		t.Error("OpenSSL 3 missing, not noticed")
+	}
+	if needsOpenSSL3([]string{"libpam.so.0 => not found"}) || needsOpenSSL3(nil) {
+		t.Error("asked for OpenSSL 3 where something else is missing")
+	}
+}
