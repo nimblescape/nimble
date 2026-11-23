@@ -1,0 +1,19 @@
+# Pinned versions of the programming languages, the same on every machine — change them
+# with nimble tool use <language>. Bugfix updates come as a daily pull request (nimble tool
+# list shows them).
+# Every other tool stays current: nimble update updates it — nvm, uv, gh, …, and
+# @nimblescape/typescript with the TypeScript it installs, which come with node.
+
+node: 26.8.1
+go: 1.27.2
+rust: 1.100.0 # rustup default toolchain (tool: rust)
+python: 3.12.15 # default python / python3, and uv's global pin
+
+# go install targets (tool: go), @latest unless a version is given.
+goTools:
+  - golang.org/x/tools/gopls
+  - github.com/go-delve/delve/cmd/dlv
+  - honnef.co/go/tools/cmd/staticcheck
+
+# Python command-line tools (tool: python), installed with `uv tool install`.
+uvTools: []

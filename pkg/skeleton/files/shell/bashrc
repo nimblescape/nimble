@@ -1,0 +1,9 @@
+# bash — loaded by ~/.bashrc (managed by nimble).
+. "$NIMBLE_HOME/shell/env.sh"
+case $- in *i*) ;; *) return ;; esac   # not interactive (ssh host cmd, scp): the environment is enough
+
+. "$NIMBLE_HOME/shell/common.sh"
+[ -r "$NIMBLE_HOME/personal/shell/common.sh" ] && . "$NIMBLE_HOME/personal/shell/common.sh"
+for _f in "$NIMBLE_HOME"/shell/bash/*.bash "$NIMBLE_HOME"/personal/shell/bash/*.bash; do [ -r "$_f" ] && . "$_f"; done; unset _f
+if command -v starship >/dev/null 2>&1; then eval "$(starship init bash)"; elif [ -n "${SSH_CONNECTION:-}" ]; then PS1='\[\e[1;33m\]\u@\h\[\e[0m\]:\w\$ '; else PS1='\u@\h:\w\$ '; fi   # tool: starship
+[ -r "$NIMBLE_HOME/local.sh" ] && . "$NIMBLE_HOME/local.sh"

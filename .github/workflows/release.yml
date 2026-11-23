@@ -1,0 +1,31 @@
+name: Release
+
+# Pushing a version tag (v1.2.3) builds nimble for macOS and Linux (amd64, arm64), the
+# Debian packages and checksums, and publishes them as a GitHub Release. The Homebrew
+# tap and the apt repository pick new releases up from there.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable   # newest Go for the release builds; go.mod only sets the minimum
+          cache: false
+      - run: go test ./...
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

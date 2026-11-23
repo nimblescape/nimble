@@ -1,0 +1,5 @@
+# Your personal layer: links on top of the shared ones (paths relative to this folder),
+# e.g. your git identity:
+#   - from: git/config
+#     to: .config/git/config
+links: []

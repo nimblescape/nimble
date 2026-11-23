@@ -1,0 +1,114 @@
+name: Pin updates
+
+# Daily: look for updates of the versions pinned in toolchain/pins.yaml (nimble tool update).
+# Bugfix updates — each tool's scheme for compatible fixes: the patch release, Rust's 1.x
+# releases — are proposed as a pull request (or, if Actions may not open pull requests in
+# this repo, as an issue with a link to open it). Feature updates (a newer minor or major)
+# are reported in an issue, kept current, and closed when there are none.
+# After merging: `nimble update` on the workstation, then `nimble update all`.
+
+on:
+  schedule:
+    - cron: "17 5 * * *" # every day, 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: patch-updates
+
+jobs:
+  patch-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6 # builds nimble from its source while there is no release
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Write the bugfix updates
+        id: update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NIMBLE_HOME: ${{ github.workspace }}
+          NIMBLE_TOKEN: ${{ secrets.NIMBLE_TOKEN }} # read access to nimblescape/nimble while it is private
+        run: |
+          # nimble: its installer while the nimble repo is public; while it is private, its
+          # newest release or else its source (main), through NIMBLE_TOKEN — a token with
+          # read access to nimblescape/nimble's contents; without it the run is skipped.
+          nimble=""
+          if curl -fsSL -o "$RUNNER_TEMP/install.sh" https://raw.githubusercontent.com/nimblescape/nimble/main/install.sh 2>/dev/null &&
+             sh "$RUNNER_TEMP/install.sh"; then
+            nimble="$HOME/.local/bin/nimble"
+          elif [ -n "$NIMBLE_TOKEN" ]; then
+            if GH_TOKEN="$NIMBLE_TOKEN" gh release download -R nimblescape/nimble -p "nimble_*_linux_amd64.tar.gz" -D "$RUNNER_TEMP/release" 2>/dev/null; then
+              tar -xzf "$RUNNER_TEMP"/release/nimble_*_linux_amd64.tar.gz -C "$RUNNER_TEMP" nimble
+            else
+              GH_TOKEN="$NIMBLE_TOKEN" gh repo clone nimblescape/nimble "$RUNNER_TEMP/nimble-src" -- -q --depth 1
+              (cd "$RUNNER_TEMP/nimble-src" && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/nimble" .)
+            fi
+            nimble="$RUNNER_TEMP/nimble"
+          else
+            echo "::notice::nimblescape/nimble is private: add a secret NIMBLE_TOKEN with read access to its contents — skipped"
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "features=skip" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          "$nimble" tool update --markdown > "$RUNNER_TEMP/body.md"
+          cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
+          if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+          # feature updates found → keep the issue current; a lookup failed → not known, leave the issue alone
+          if grep -q '<!-- feature-updates -->' "$RUNNER_TEMP/body.md"; then echo "features=true" >> "$GITHUB_OUTPUT"
+          elif grep -q '<!-- incomplete -->' "$RUNNER_TEMP/body.md"; then echo "features=skip" >> "$GITHUB_OUTPUT"
+          else echo "features=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Open or update the pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPARE_URL: ${{ github.server_url }}/${{ github.repository }}/compare/main...patch-updates?expand=1
+        run: |
+          branch=patch-updates
+          title="Bugfix updates for pinned versions"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$branch"
+          git commit -qam "$title"
+          git push -qf origin "$branch"
+
+          issue=$(gh issue list --state open --search "in:title \"$title\"" --json number -q '.[0].number')
+          if [ -n "$(gh pr list --head "$branch" --state open --json number -q '.[].number')" ] &&
+             gh pr edit "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md" ||
+             gh pr create --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"; then
+            # a pull request exists now: close the fallback issue from an earlier run
+            pr=$(gh pr view "$branch" --json url -q .url)
+            [ -z "$issue" ] || gh issue close "$issue" --comment "Superseded by $pr"
+          else
+            # Actions may not open pull requests here: open (or update) an issue with the link instead.
+            { cat "$RUNNER_TEMP/body.md"; echo; echo "Open the pull request: $COMPARE_URL"; } > "$RUNNER_TEMP/issue.md"
+            if [ -n "$issue" ]; then
+              gh issue edit "$issue" --body-file "$RUNNER_TEMP/issue.md"
+            else
+              gh issue create --title "$title" --body-file "$RUNNER_TEMP/issue.md"
+            fi
+          fi
+
+      - name: Report feature updates
+        if: steps.update.outputs.features != 'skip'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FEATURES: ${{ steps.update.outputs.features }}
+        run: |
+          title="Feature updates for pinned versions"
+          issue=$(gh issue list --state open --search "in:title \"$title\"" --json number -q '.[0].number')
+          if [ "$FEATURES" = true ]; then
+            if [ -n "$issue" ]; then
+              gh issue edit "$issue" --body-file "$RUNNER_TEMP/body.md"
+            else
+              gh issue create --title "$title" --body-file "$RUNNER_TEMP/body.md"
+            fi
+          elif [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "No feature updates left: the pins are on the newest releases."
+          fi

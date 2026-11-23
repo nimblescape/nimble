@@ -1,0 +1,48 @@
+# The prompt on every machine, in bash and zsh (tool: starship) — https://starship.rs/config/
+# Close to the pure prompt: user@host, directory, git branch and state, command duration, ❯.
+# user@host is grey on this machine and bold yellow on a remote one (over ssh).
+add_newline = true
+format = "$username$hostname${env_var.NIMBLE_LOCAL_USERHOST}$directory$git_branch$git_state$git_status$cmd_duration$line_break$python$character"
+
+# over ssh (or as another user): user@host in its own color
+[username]
+show_always = false
+style_user = "bold yellow"
+style_root = "bold red"
+format = "[$user]($style)"
+
+[hostname]
+ssh_only = true
+style = "bold yellow"
+format = "[@$hostname]($style) "
+
+# on this machine: shell/common.sh sets NIMBLE_LOCAL_USERHOST outside ssh sessions
+[env_var.NIMBLE_LOCAL_USERHOST]
+style = "bright-black"
+format = "[$env_value]($style) "
+
+[directory]
+style = "blue"
+truncation_length = 0
+truncate_to_repo = false
+
+[git_branch]
+style = "bright-black"
+format = "[$branch]($style)"
+
+[git_status]
+style = "cyan"
+stashed = "≡"
+format = "[$all_status$ahead_behind]($style) "
+
+[cmd_duration]
+style = "yellow"
+format = "[$duration]($style) "
+
+[python]
+format = "[$virtualenv]($style) "
+style = "bright-black"
+
+[character]
+success_symbol = "[❯](purple)"
+error_symbol = "[❯](red)"

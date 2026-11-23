@@ -1,0 +1,14 @@
+# Defaults for every ssh connection from the workstation (nimble appends this to the generated
+# ssh config, after the host entries from ~/.nimble/hosts).
+Host *
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%C
+  ControlPersist 5m
+  SetEnv LC_CTYPE=C.UTF-8
+  IdentitiesOnly yes
+
+# On a Mac: the daily key in the Secure Enclave (Touch ID) — nimble key enclave. Elsewhere
+# these lines must not apply: the provider is macOS's, and ssh would try it for every key.
+Match exec "test -e /usr/lib/ssh-keychain.dylib"
+  IdentityFile ~/.ssh/id_ecdsa_sk_rk_ssh
+  SecurityKeyProvider /usr/lib/ssh-keychain.dylib

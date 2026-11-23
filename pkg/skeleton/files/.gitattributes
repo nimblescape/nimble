@@ -1,0 +1,2 @@
+# LF line endings on every machine, whatever core.autocrlf it has
+* text=auto eol=lf

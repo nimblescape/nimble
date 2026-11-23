@@ -1,0 +1,63 @@
+name: pam_rssh
+
+# Builds the pam_rssh modules nimble ships (pkg/harden/module/) from the pin in
+# build/pam_rssh/build.sh — version, commit, Rust version — for amd64 and arm64, each in a
+# Debian 12 container, and opens a pull request with the result. Hosts never build the
+# module: the Linux builds of nimble carry it. Runs when the pin changes, or by hand.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["build/pam_rssh/build.sh"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v5
+      - run: sh build/pam_rssh/build.sh "$GITHUB_WORKSPACE/out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: module-${{ matrix.arch }}
+          path: out/
+
+  propose:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Open a pull request with the modules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp out/libpam_rssh_*.so out/LICENSE out/VERSION pkg/harden/module/
+          if git diff --quiet -- pkg/harden/module; then echo "the modules in the repo are these builds already"; exit 0; fi
+          version=$(cat pkg/harden/module/VERSION)
+          branch=pam-rssh-$version
+          { echo "The pam_rssh modules nimble ships, built by this workflow from the pin in \`build/pam_rssh/build.sh\`."; echo; echo '```'; (cd pkg/harden/module && sha256sum libpam_rssh_*.so); echo '```'; } > "$RUNNER_TEMP/body.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$branch"
+          git add pkg/harden/module
+          git commit -qm "pam_rssh $version: the modules nimble ships"
+          git push -qf origin "$branch"
+          if [ -n "$(gh pr list --head "$branch" --state open --json number -q '.[].number')" ]; then
+            gh pr edit "$branch" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --head "$branch" --title "pam_rssh $version" --body-file "$RUNNER_TEMP/body.md"
+          fi
