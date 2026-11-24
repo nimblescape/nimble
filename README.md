@@ -35,6 +35,8 @@ nimble tool list                      # the catalog, and updates of the pinned l
 nimble service add claude owner/app --host devbox   # a Claude Code server for a repo
 nimble status; nimble doctor all      # what is installed vs. wanted; a health check
 nimble update all --yubikey           # reach the hosts with a YubiKey backup (new Mac, lost or expired daily key)
+nimble token add cherry provider=cherry   # seal an API token for every registered key (once per Mac: nimble token key enclave)
+nimble token run cherry=CHERRY_AUTH_TOKEN -- terraform plan   # open it (Touch ID) into a variable of one command
 nimble push                           # check, commit and publish config changes
 ```
 
@@ -57,6 +59,9 @@ Commands that change the config check it and commit it (`tool use` and `tool upd
 | `tool update [name…]` | Write bugfix updates of the pinned languages (feature updates on request) |
 | `service list\|add\|enable\|disable\|remove [--host h]` | A Claude Code server per repo on a host |
 | `key list\|enclave\|yubikey\|remove` | Daily keys (create, renew) and YubiKey backups (set up, register, renew); a renewal hands over: the new key is primary at once, the old one opens the hosts not updated yet until every host has the new one (`--handover`, default 14 days) |
+| `token list\|add\|seal\|print\|run\|reseal\|remove` | Secrets such as API tokens: sealed for every registered key and shared through the config repo, or in clear text on this machine only; opened with Touch ID or a YubiKey, also from programs through the Go package `seal` |
+| `token key list\|enclave\|yubikey\|check\|remove` | The keys tokens are sealed for: the Secure Enclave key of each Mac, YubiKeys |
+| `agent` | An ssh agent in front of yours that also opens sealed tokens for the hosts you ssh to (Touch ID here) |
 | `domain list\|create` | Administration domains: which keys a group of hosts trusts |
 | `version`, `upgrade`, `path`, `edit` | nimble itself and the config repo |
 
@@ -67,14 +72,15 @@ Commands that change the config check it and commit it (`tool use` and `tool upd
 | `nimble.yaml` | The default template, the domains (the first is the default), shared links |
 | `hosts/<name>.yaml` | One machine: address, admin user, domain, mode, tools, shell, services, hardening level |
 | `templates/<name>.yaml` | Tools and login shell that `host create` copies into a new host file; `base` installs nothing |
-| `keys/` | The public keys of the hardware keys in use |
+| `keys/` | The public keys of the hardware keys in use; `keys/seal/`: the keys tokens are sealed for |
+| `tokens/` | Sealed tokens (`nimble token`) |
 | `toolchain/pins.yaml` | The pinned languages, and the npm, Go and uv tools to install |
 | `shell/` | Shared shell files for bash and zsh, and the starship prompt |
 | `ssh/defaults` | Settings for every connection in the generated ssh config |
 | `personal/` | Your own layer: git identity, app settings, extra links and shell lines |
 | `.github/workflows/` | The daily pin updates: bugfix updates as one pull request, feature updates in an issue |
 
-Keep the config repo private and in your own account; one in an organization's account is a configuration shared by its members. Not in the repo: `~/.nimble/local.sh` (this machine's shell additions), logins, tokens and `~/.ssh`.
+Keep the config repo private and in your own account; one in an organization's account is a configuration shared by its members. Not in the repo: `~/.nimble/local.sh` (this machine's shell additions), logins, tokens in clear text (`~/.config/nimble/tokens`) and `~/.ssh`.
 
 ## Requirements
 
@@ -82,7 +88,7 @@ A Mac, or a machine with Debian 12 (bookworm) or newer or Ubuntu 24.04 or newer,
 
 ## Development
 
-Go, cobra, dependencies vendored, `CGO_ENABLED=0`. Commands are in `cmd/<name>/`, shared code in `pkg/`, the new-config-repo skeleton in `pkg/skeleton/`.
+Go, cobra, dependencies vendored, `CGO_ENABLED=0`. Commands are in `cmd/<name>/`, shared code in `pkg/`, the new-config-repo skeleton in `pkg/skeleton/`. `seal/` is the package that other programs import (sealed tokens, standard library only).
 
 ```bash
 go test ./... && go build -o ~/.local/bin/nimble .

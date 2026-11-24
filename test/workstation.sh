@@ -56,8 +56,8 @@ for image in "${images[@]}"; do
   user 'grep -qx "mode: workstation" ~/.nimble/hosts/ws.yaml && grep -qx "format: 2" ~/.nimble/nimble.yaml && git -C ~/.nimble log --oneline | grep -q "new config repo"' ||
     { cat "$work/init.log"; fail "the new config repo"; }
   grep -q "isn't hardened yet" "$work/init.log" || { cat "$work/init.log"; fail "init didn't say the workstation isn't hardened yet"; }
-  user 'ssh -V 2>&1 | grep -q OpenSSH && ykman --version >/dev/null' || fail "ssh client or ykman missing"
-  ok "init --new: config repo, git, ssh client, ykman"
+  user 'ssh -V 2>&1 | grep -q OpenSSH && ykman --version >/dev/null && command -v fido2-token >/dev/null' || fail "ssh client, ykman or fido2-tools missing"
+  ok "init --new: config repo, git, ssh client, ykman, fido2-tools"
 
   # 2. hosts: a managed host and an ssh entry get their ssh config, each its own way
   user "$n host create devbox --mode managed --address devbox.example.com --user debian --domain default --template none --no-init" </dev/null >"$work/create.log" 2>&1 ||

@@ -13,15 +13,16 @@ import (
 )
 
 // SSHClient gives this workstation the ssh that works with both of nimble's hardware keys,
-// the daily key in the Secure Enclave and the YubiKey backups, and ykman (a YubiKey's FIDO
-// PIN, which one is plugged in). macOS's own OpenSSH has no FIDO support, so a Mac gets
+// the daily key in the Secure Enclave and the YubiKey backups, ykman (a YubiKey's FIDO
+// PIN, which one is plugged in) and the tools of libfido2 (the sealing key of a YubiKey,
+// nimble token key yubikey). macOS's own OpenSSH has no FIDO support, so a Mac gets
 // Homebrew's, linked: Homebrew's bin comes first in PATH, so it is the ssh of every shell
 // and of nimble. It reaches the Secure Enclave through macOS's provider
 // (/usr/lib/ssh-keychain.dylib) as the system's does. Debian's openssh-client talks to FIDO
 // keys itself. upgrade also brings them up to date (nimble update).
 func SSHClient(upgrade bool) error {
 	if !Darwin() {
-		if _, err := nimble.AptInstall("openssh-client", "yubikey-manager"); err != nil {
+		if _, err := nimble.AptInstall("openssh-client", "yubikey-manager", "fido2-tools"); err != nil {
 			return err
 		}
 		if upgrade {
@@ -29,7 +30,7 @@ func SSHClient(upgrade bool) error {
 		}
 		return nil
 	}
-	for _, formula := range []string{"openssh", "ykman"} {
+	for _, formula := range []string{"openssh", "ykman", "libfido2"} {
 		if err := brew(formula, false); err != nil {
 			return err
 		}

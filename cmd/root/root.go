@@ -20,6 +20,7 @@ import (
 	"github.com/nimblescape/nimble/cmd/service"
 	"github.com/nimblescape/nimble/cmd/status"
 	"github.com/nimblescape/nimble/cmd/template"
+	"github.com/nimblescape/nimble/cmd/token"
 	"github.com/nimblescape/nimble/cmd/tool"
 	"github.com/nimblescape/nimble/cmd/update"
 	"github.com/nimblescape/nimble/pkg/config"
@@ -82,7 +83,7 @@ func NewRootCmd(version string) *cobra.Command {
 		cmd.AddCommand(c)
 	}
 	for _, c := range []*cobra.Command{host.NewCmdHost(), template.NewCmdTemplate(), tool.NewCmdTool(), service.NewCmdService(),
-		key.NewCmdKey(), domain.NewCmdDomain(), alias.NewCmdAlias()} {
+		key.NewCmdKey(), token.NewCmdToken(), token.NewCmdAgent(), domain.NewCmdDomain(), alias.NewCmdAlias()} {
 		c.GroupID = "inventories"
 		cmd.AddCommand(c)
 	}

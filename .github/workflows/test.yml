@@ -23,7 +23,7 @@ jobs:
         with:
           go-version: stable
           cache: false
-      - run: test -z "$(gofmt -l cmd pkg main.go)"
+      - run: test -z "$(gofmt -l cmd pkg seal main.go)"
       - run: go vet ./...
       - run: go test ./...
 
