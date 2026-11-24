@@ -10,6 +10,7 @@ import (
 	"github.com/nimblescape/nimble/pkg/config"
 	"github.com/nimblescape/nimble/pkg/nimble"
 	"github.com/nimblescape/nimble/pkg/setup"
+	"github.com/nimblescape/nimble/seal"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,9 @@ func NewCmdPush() *cobra.Command {
 					nimble.Warn(e.Error())
 				}
 				return errors.New("fix these first (nimble host edit / template edit) — nothing was pushed")
+			}
+			if err := checkTokens(); err != nil {
+				return err
 			}
 			for _, d := range dirs() {
 				if err := publish(d, message, diff); err != nil {
@@ -254,5 +258,25 @@ func commit(dir, message string) error {
 		return err
 	}
 	nimble.Say("committed: " + message)
+	return nil
+}
+
+// checkTokens refuses to publish tokens/ with a token in clear text (nimble never shares
+// one) or a file that is no readable sealed token.
+func checkTokens() error {
+	ts, err := seal.ListIn(seal.Dir())
+	bad := err != nil
+	if err != nil {
+		nimble.Warn(err.Error())
+	}
+	for _, t := range ts {
+		if !t.Sealed() {
+			bad = true
+			nimble.Warn(nimble.Tilde(t.Path) + " is a token in clear text: nimble never shares one — seal it (nimble token seal " + t.Name + ") or move it to " + nimble.Tilde(seal.LocalDir()))
+		}
+	}
+	if bad {
+		return errors.New("fix the tokens first — nothing was pushed")
+	}
 	return nil
 }

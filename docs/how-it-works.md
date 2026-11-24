@@ -12,10 +12,11 @@ nimble is one Go binary with two jobs. On a **workstation** (macOS or Debian) it
 6. [Hosts](#hosts)
 7. [Hardening](#hardening)
 8. [Keys and domains](#keys-and-domains)
-9. [Services: the Claude Code server](#services-the-claude-code-server)
-10. [Checking: status and doctor](#checking-status-and-doctor)
-11. [nimble itself](#nimble-itself)
-12. [Reference: environment and files](#reference-environment-and-files)
+9. [Tokens](#tokens)
+10. [Services: the Claude Code server](#services-the-claude-code-server)
+11. [Checking: status and doctor](#checking-status-and-doctor)
+12. [nimble itself](#nimble-itself)
+13. [Reference: environment and files](#reference-environment-and-files)
 
 ## The model
 
@@ -476,6 +477,90 @@ The `sudo` level checks only the admin's sudo rights (no NOPASSWD), PAM and the 
 - **`nimble key list`** shows the keys per domain, the YubiKey backups, this Mac's Secure Enclave keys with their validity, and the handovers in progress with the hosts still waiting.
 - **Domains**: `nimble domain create <name> [--label L]` adds one (the label defaults to the name, with `_` for `-`: a label has no `-`, because it ends the file name `keys/enclave/<machine>-<label>.pub`). Domains that share a label trust the same daily keys; a label of its own separates them.
 
+## Tokens
+
+A token is a secret such as the API key of a provider. nimble keeps it in one of two forms:
+
+| Form | Where | Shared | Opened by |
+|---|---|---|---|
+| Sealed | `tokens/<name>.yaml` in the config repo (`--local`: `~/.config/nimble/tokens/`) | yes: `nimble push` publishes it | a registered sealing key: Touch ID on a Mac, PIN and touch on a YubiKey |
+| Clear text | `~/.config/nimble/tokens/<name>`, mode 600 | never | nothing: the file content is the secret |
+
+### Sealing keys
+
+A sealing key runs an ECDH key agreement, so it is a key of its own: the daily ssh keys only sign. `keys/seal/` in the config repo lists the public keys, one YAML file each.
+
+- **`nimble token key enclave`** (macOS) creates the key `nimble-seal` in the Secure Enclave (`sc_auth create-ctk-identity -k p-256-ne -t bio`: Touch ID for every use) unless this Mac has one, checks with one Touch ID that it runs the key agreement, writes `keys/seal/enclave/<machine>.yaml` (the public key and the public key hash by which macOS finds it) and commits.
+- **`nimble token key yubikey <name>`** creates a FIDO2 credential with the hmac-secret extension on the plugged-in YubiKey (`fido2-cred -M -h -v`, relying party `nimble:seal`; the credential is not resident). nimble asks the YubiKey for the hmac-secret of a fixed salt (`fido2-assert -G -h -p -v`: PIN and touch) and derives a P-256 key from it with HKDF-SHA256. It writes the public key and the credential ID to `keys/seal/yubikey/<name>.yaml`. The tools come from libfido2 (`fido2-tools` on Debian), which `nimble apply` installs.
+- **`nimble token key list`** shows the registered keys and the token keys of this Mac, with whether each one runs a key agreement. **`check`** runs one key agreement with each sealing key this machine reaches and compares it with the public key. **`remove`** retires one.
+
+### The sealed file
+
+```yaml
+# A token sealed by nimble (nimble token): only the keys under recipients open it.
+nimbleToken: 1
+name: cherry
+created: 2026-11-24T06:00:00Z
+labels:
+  domain: nimblescape.io
+  provider: cherry
+recipients:
+  enclave/hs-mbp: enclave <public key> <handle> <ephemeral key> <wrapped data key>
+data: <nonce and ciphertext>
+```
+
+Version 1 is one fixed set of algorithms; other algorithms make a new version:
+
+1. A new random data key encrypts the secret: AES-256-GCM with a random nonce. The name and the labels are its additional data, so a changed name or label makes the token unreadable.
+2. For each recipient, a new ephemeral P-256 key agrees a shared secret with the recipient's public key (ECDH). HKDF-SHA256 turns it into a key-wrapping key (salt: the ephemeral and the recipient public key). That key encrypts the data key with AES-256-GCM.
+
+Sealing needs only the public keys, so a token is sealed for every registered key at once, without Touch ID. nimble reads and writes the file with its own strict reader: top-level `key: value` lines and the two maps, no quotes, no flow style, no anchors. Binary values are base64. Any file that doesn't start with `nimbleToken:` (after comments) is a token in clear text.
+
+### Opening
+
+A sealed token opens with the first of these that reaches one of its recipients:
+
+1. the Secure Enclave of this Mac: a token key with the recipient's public key hash runs the key agreement (Touch ID);
+2. a plugged-in YubiKey: the hmac-secret gives the private key back (PIN and touch);
+3. the agent at `SSH_AUTH_SOCK`: a `nimble agent`, also one forwarded over ssh (see below).
+
+nimble reaches the Secure Enclave through the Security framework of macOS, without cgo: it imports `dlopen` and `dlsym` from libSystem and calls every other function through the libc call path of the Go runtime, as `golang.org/x/sys/unix` does. A token in clear text opens only when no other user can read its file. nimble never writes one into the config repo, and refuses one it finds there.
+
+### Commands
+
+- **`nimble token add <name> [key=value…]`** asks for the secret (or reads it from stdin), seals it for every key in `keys/seal/`, writes `tokens/<name>.yaml` and commits. `--local` keeps the sealed token on this machine; `--clear` keeps it in clear text on this machine. On a Mac without a sealing key, it offers to create one first.
+- **`nimble token seal <name|path> [key=value…]`** seals a token in clear text in its place, for example the file of another program: `nimble token seal ~/.nimblesec/nimblescape.io/cherry provider=cherry domain=nimblescape.io`.
+- **`nimble token print <name|path>`** writes the secret to stdout (a line break only on a terminal). **`nimble token run <name|path>=<VARIABLE>… -- <command>`** puts the secrets into environment variables and runs the command in place of nimble.
+- **`nimble token reseal [name|path|folder…]`** opens each sealed token and seals it again for the keys registered now: after a new Mac's `token key enclave`, or a `token key remove`. Without arguments it takes every token whose keys differ.
+- **`nimble token list [folder…]`** shows the tokens, their labels, their recipients and which of those this machine reaches. **`nimble token remove`** deletes one.
+
+Every command takes a name (`~/.config/nimble/tokens` first, then `tokens/`) or a path.
+
+### nimble agent
+
+`nimble agent` is an ssh agent in front of the one in `SSH_AUTH_SOCK`. It passes every ssh request (logins, sudo on the hosts) to that agent unchanged. It also answers two extension requests (`SSH_AGENTC_EXTENSION`) itself:
+
+- `seal-keys@nimblescape.com` lists the keys it opens tokens with: the token keys of this Mac that run a key agreement, and `fido2` when it runs in a terminal and a YubiKey is plugged in.
+- `seal-kek@nimblescape.com` runs the key agreement for one recipient stanza, after Touch ID (or the YubiKey's PIN and touch), and returns only the key-wrapping key of that stanza.
+
+It listens at `~/.nimble/cache/agent/agent.sock` (folder mode 700). With `export SSH_AUTH_SOCK=~/.nimble/cache/agent/agent.sock`, ssh uses it and forwards it to the managed hosts (`ForwardAgent yes`). A program on a host then opens a token sealed for this Mac: the token and the private key stay where they are, and each request shows in the agent's terminal and asks for Touch ID. A forwarded agent reaches only the processes of that ssh login, while the login lasts.
+
+### For other programs: the package seal
+
+`github.com/nimblescape/nimble/seal` is the package of this module that other Go programs import. It uses only the standard library and builds with `CGO_ENABLED=0`:
+
+| Function | Does |
+|---|---|
+| `Load(path)` | reads a token file: sealed, or else in clear text |
+| `(*Token).Open()` | returns the secret (the order of [Opening](#opening)); errors wrap `ErrNoKey` |
+| `Find(labels)`, `Get(name)`, `List()` | search `~/.config/nimble/tokens` and `tokens/` (sealed only) |
+| `FindIn(dir, labels)`, `GetIn(dir, name)`, `ListIn(dir)` | the same in a folder of the program's own |
+| `Recipients()` | the keys in `keys/seal/` |
+| `Seal(name, labels, secret, recipients)`, `Clear(name, secret)`, `(*Token).Reseal`, `(*Token).Save(path)` | write tokens (mode 600) |
+
+nimblesec, for example, keeps its provider token in `~/.nimblesec/<domain>/<provider>` and opens it with `Load` and `Open`.
+
+
 ## Services: the Claude Code server
 
 `nimble service add claude [owner/name] [--host h]` runs a [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control) server for a repo on a Debian host — from the workstation with `--host`, or on the host itself (the workstation reads the change back, see "Changes made on a host"). Inside a checkout, its GitHub repo is the default; the repo must exist on GitHub. The host needs `gh` (`nimble tool select`, check `gh`). The service is recorded in the host file, from the workstation the host is updated, and then, on the host as root:
@@ -519,7 +604,8 @@ Both take host names or `all`; they then run on the hosts over SSH.
 | `GITHUB_TOKEN` | GitHub API requests (release lists, version check), to avoid rate limits |
 | `VISUAL` | the editor for `edit` commands where VS Code isn't used (default `vi`) |
 | `NVM_DIR` | nvm's folder (default `~/.nvm`) |
-| `XDG_CONFIG_HOME` | where uv keeps its global Python pin |
+| `XDG_CONFIG_HOME` | where uv keeps its global Python pin, and nimble the tokens of this machine (`nimble/tokens`) |
+| `SSH_AUTH_SOCK` | the agent that `nimble token` and the package seal ask when no key of this machine opens a token; the agent that `nimble agent` passes ssh requests to |
 | `NO_COLOR` | output without colors |
 | `TERM=dumb` | no spinner on waiting steps |
 
@@ -536,6 +622,9 @@ Both take host names or `all`; they then run on the hosts over SSH.
 | `personal/aliases.yaml` | config repo | directory aliases (`nimble alias`) |
 | `~/.ssh/id_ecdsa_sk_rk_<label>`, `.pub` (during a handover also `.old`, `.old.pub`) | Mac | handles of the Secure Enclave keys |
 | `~/.nimble/cache/handover.yaml` | workstation | key renewals in progress: old key, deadline, hosts updated since |
+| `tokens/<name>.yaml`, `keys/seal/<kind>/<name>.yaml` | config repo | sealed tokens, the keys they are sealed for (`nimble token`) |
+| `~/.config/nimble/tokens/` | all | tokens of this machine only: in clear text (mode 600), or sealed with `--local` |
+| `~/.nimble/cache/agent/agent.sock` | workstation | the socket of `nimble agent` |
 | `~/.gitconfig` | all | created empty (with a comment) if missing |
 | `/etc/shells` | when the login shell changes | the new shell is added |
 | `~/.nimble/backup/<timestamp>/` | all | files nimble replaced |
